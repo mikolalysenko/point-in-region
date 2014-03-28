@@ -32,7 +32,7 @@
   },
   "homepage": "https://github.com/mikolalysenko/point-in-region",
   "dependencies": {
-    "robust-orientation": "^1.0.0"
+    "slab-decomposition": "0.0.0"
   },
   "devDependencies": {
     "game-shell": "^1.0.0",
