@@ -41,8 +41,6 @@ function preprocessRegions(positions, regions) {
           continue
         }
 
-
-
         var key = Math.min(a,b) + ":" + Math.max(a,b)
         if(key in segmentIndex) {
           if(idx >= 0) {
