@@ -18,18 +18,19 @@ function preprocessRegions(positions, regions) {
   var segmentIndex = {}
   var segments = []
   var regionIds = []
+  var numVertices = positions.length
 
   for(var i=0,numRegions=regions.length; i<numRegions; ++i) {
     var region = regions[i]
     for(var j=0,numLoops=region.length; j<numLoops; ++j) {
       var loop = region[j]
       var n = loop.length
-      for(var k=0,a=loop[n.length-1],b=0,s=positions[a],t=s; k<n; ++k) {
+      for(var k=0,a=loop[n-1],b=0,s=positions[a],t=s; k<n; ++k) {
         b = a
         t = s
         a = loop[k]
         s = positions[a]
-
+        
         var x0 = s[0]
         var x1 = t[0]
         var idx = -1
@@ -40,7 +41,9 @@ function preprocessRegions(positions, regions) {
           continue
         }
 
-        var key = a + ':' + b
+
+
+        var key = Math.min(a,b) + ":" + Math.max(a,b)
         if(key in segmentIndex) {
           if(idx >= 0) {
             regionIds[segmentIndex[key]] = idx

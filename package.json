@@ -32,11 +32,12 @@
   },
   "homepage": "https://github.com/mikolalysenko/point-in-region",
   "dependencies": {
-    "slab-decomposition": "0.0.0"
+    "slab-decomposition": "^1.0.1"
   },
   "devDependencies": {
     "game-shell": "^1.0.0",
     "tape": "^2.12.0",
-    "delaunay-triangulate": "0.0.1"
+    "delaunay-triangulate": "0.0.1",
+    "dup": "0.0.0"
   }
 }
