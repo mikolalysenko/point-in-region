@@ -47,7 +47,7 @@ assert.equal(classifyPoint([2.5, 0.5]), -1)  //Point in center hole is outside r
 
 [Here is an in browser demo you can try out yourself:](https://mikolalysenko.github.io/point-in-region)
 
-<img src="screenshot.png">
+<img src="https://raw.githubusercontent.com/mikolalysenko/point-in-region/master/screenshot.png">
 
 
 # Install
