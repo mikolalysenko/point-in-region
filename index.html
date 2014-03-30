@@ -1,0 +1,5701 @@
+<!DOCTYPE html>
+<html>
+<body></body>
+<script language=javascript>
+;(function(e,t,n){function i(n,s){if(!t[n]){if(!e[n]){var o=typeof require=="function"&&require;if(!s&&o)return o(n,!0);if(r)return r(n,!0);throw new Error("Cannot find module '"+n+"'")}var u=t[n]={exports:{}};e[n][0].call(u.exports,function(t){var r=e[n][1][t];return i(r?r:t)},u,u.exports)}return t[n].exports}var r=typeof require=="function"&&require;for(var s=0;s<n.length;s++)i(n[s]);return i})({1:[function(require,module,exports){
+"use strict"
+
+var shell = require("game-shell")()
+var triangulate = require("delaunay-triangulate")
+var dup = require("dup")
+var processRegions = require("../region")
+
+var numPoints = 1000
+
+var points = dup(numPoints).map(function() { return [Math.random(), Math.random()] })
+var triangles = triangulate(points)
+var classifyPoint = processRegions(points, triangles.map(function(c) { return [c] }))
+
+var canvas
+var context
+
+shell.on("init", function() {
+  canvas = document.createElement("canvas")
+  canvas.width = shell.width
+  canvas.height = shell.height
+  context = canvas.getContext("2d")
+  shell.element.appendChild(canvas)
+})
+
+shell.on("resize", function(w, h) {
+  canvas.width = w
+  canvas.height = h
+})
+
+shell.on("render", function() {
+  var w = canvas.width
+  var h = canvas.height
+  var mouse = [shell.mouseX/w, shell.mouseY/h]
+  var mouseCell = classifyPoint(mouse)
+  context.setTransform(
+    w, 0, 
+    0, h,
+    0, 0)
+  context.fillStyle = "#fff"
+  context.fillRect(0,0,w,h)
+  context.strokeStyle = "#000"
+  context.lineWidth = Math.min(1.0/w, 1.0/h)
+  for(var i=0; i<triangles.length; ++i) {
+    var cell = triangles[i]
+    context.beginPath()
+    context.moveTo(points[cell[0]][0], points[cell[0]][1])
+    for(var j=1; j<cell.length; ++j) {
+      context.lineTo(points[cell[j]][0], points[cell[j]][1])
+    }
+    context.closePath()
+    context.stroke()
+    if(i === mouseCell) {
+      context.fillStyle = "#eb6"
+      context.fill()
+    }
+  }
+  context.fillStyle = "#f00"
+  context.beginPath()
+  context.arc(mouse[0], mouse[1], 5.0/w, 0, 2*Math.PI)
+  context.closePath()
+  context.fill()
+
+})
+},{"../region":2,"game-shell":3,"delaunay-triangulate":4,"dup":5}],5:[function(require,module,exports){
+"use strict"
+
+function dupe_array(count, value, i) {
+  var c = count[i]|0
+  if(c <= 0) {
+    return []
+  }
+  var result = new Array(c), j
+  if(i === count.length-1) {
+    for(j=0; j<c; ++j) {
+      result[j] = value
+    }
+  } else {
+    for(j=0; j<c; ++j) {
+      result[j] = dupe_array(count, value, i+1)
+    }
+  }
+  return result
+}
+
+function dupe_number(count, value) {
+  var result, i
+  result = new Array(count)
+  for(i=0; i<count; ++i) {
+    result[i] = value
+  }
+  return result
+}
+
+function dupe(count, value) {
+  if(typeof value === "undefined") {
+    value = 0
+  }
+  switch(typeof count) {
+    case "number":
+      if(count > 0) {
+        return dupe_number(count|0, value)
+      }
+    break
+    case "object":
+      if(typeof (count.length) === "number") {
+        return dupe_array(count, value, 0)
+      }
+    break
+  }
+  return []
+}
+
+module.exports = dupe
+},{}],2:[function(require,module,exports){
+"use strict"
+
+module.exports = preprocessRegions
+
+var createSlabs = require("slab-decomposition")
+
+function createRegionQuery(slabs, regionIds) {
+  return function classifyPoint(point) {
+    var idx = slabs.castUp(point)
+    if(idx < 0) {
+      return -1
+    }
+    return regionIds[idx]
+  }
+}
+
+function preprocessRegions(positions, regions) {
+  var segmentIndex = {}
+  var segments = []
+  var regionIds = []
+  var numVertices = positions.length
+
+  for(var i=0,numRegions=regions.length; i<numRegions; ++i) {
+    var region = regions[i]
+    for(var j=0,numLoops=region.length; j<numLoops; ++j) {
+      var loop = region[j]
+      var n = loop.length
+      for(var k=0,a=loop[n-1],b=0,s=positions[a],t=s; k<n; ++k) {
+        b = a
+        t = s
+        a = loop[k]
+        s = positions[a]
+        
+        var x0 = s[0]
+        var x1 = t[0]
+        var idx = -1
+
+        if(x0 < x1) {
+          idx = i
+        } else if(x0 === x1) {
+          continue
+        }
+
+
+
+        var key = Math.min(a,b) + ":" + Math.max(a,b)
+        if(key in segmentIndex) {
+          if(idx >= 0) {
+            regionIds[segmentIndex[key]] = idx
+          }
+        } else {
+          segmentIndex[key] = segments.length
+          segments.push([t, s])
+          regionIds.push(idx)
+        }
+      }
+    }
+  }
+
+  //Return new query object
+  var slabs = createSlabs(segments)
+  return createRegionQuery(slabs, regionIds)
+}
+},{"slab-decomposition":6}],7:[function(require,module,exports){
+// shim for using process in browser
+
+var process = module.exports = {};
+
+process.nextTick = (function () {
+    var canSetImmediate = typeof window !== 'undefined'
+    && window.setImmediate;
+    var canPost = typeof window !== 'undefined'
+    && window.postMessage && window.addEventListener
+    ;
+
+    if (canSetImmediate) {
+        return function (f) { return window.setImmediate(f) };
+    }
+
+    if (canPost) {
+        var queue = [];
+        window.addEventListener('message', function (ev) {
+            if (ev.source === window && ev.data === 'process-tick') {
+                ev.stopPropagation();
+                if (queue.length > 0) {
+                    var fn = queue.shift();
+                    fn();
+                }
+            }
+        }, true);
+
+        return function nextTick(fn) {
+            queue.push(fn);
+            window.postMessage('process-tick', '*');
+        };
+    }
+
+    return function nextTick(fn) {
+        setTimeout(fn, 0);
+    };
+})();
+
+process.title = 'browser';
+process.browser = true;
+process.env = {};
+process.argv = [];
+
+process.binding = function (name) {
+    throw new Error('process.binding is not supported');
+}
+
+// TODO(shtylman)
+process.cwd = function () { return '/' };
+process.chdir = function (dir) {
+    throw new Error('process.chdir is not supported');
+};
+
+},{}],8:[function(require,module,exports){
+(function(process){if (!process.EventEmitter) process.EventEmitter = function () {};
+
+var EventEmitter = exports.EventEmitter = process.EventEmitter;
+var isArray = typeof Array.isArray === 'function'
+    ? Array.isArray
+    : function (xs) {
+        return Object.prototype.toString.call(xs) === '[object Array]'
+    }
+;
+function indexOf (xs, x) {
+    if (xs.indexOf) return xs.indexOf(x);
+    for (var i = 0; i < xs.length; i++) {
+        if (x === xs[i]) return i;
+    }
+    return -1;
+}
+
+// By default EventEmitters will print a warning if more than
+// 10 listeners are added to it. This is a useful default which
+// helps finding memory leaks.
+//
+// Obviously not all Emitters should be limited to 10. This function allows
+// that to be increased. Set to zero for unlimited.
+var defaultMaxListeners = 10;
+EventEmitter.prototype.setMaxListeners = function(n) {
+  if (!this._events) this._events = {};
+  this._events.maxListeners = n;
+};
+
+
+EventEmitter.prototype.emit = function(type) {
+  // If there is no 'error' event listener then throw.
+  if (type === 'error') {
+    if (!this._events || !this._events.error ||
+        (isArray(this._events.error) && !this._events.error.length))
+    {
+      if (arguments[1] instanceof Error) {
+        throw arguments[1]; // Unhandled 'error' event
+      } else {
+        throw new Error("Uncaught, unspecified 'error' event.");
+      }
+      return false;
+    }
+  }
+
+  if (!this._events) return false;
+  var handler = this._events[type];
+  if (!handler) return false;
+
+  if (typeof handler == 'function') {
+    switch (arguments.length) {
+      // fast cases
+      case 1:
+        handler.call(this);
+        break;
+      case 2:
+        handler.call(this, arguments[1]);
+        break;
+      case 3:
+        handler.call(this, arguments[1], arguments[2]);
+        break;
+      // slower
+      default:
+        var args = Array.prototype.slice.call(arguments, 1);
+        handler.apply(this, args);
+    }
+    return true;
+
+  } else if (isArray(handler)) {
+    var args = Array.prototype.slice.call(arguments, 1);
+
+    var listeners = handler.slice();
+    for (var i = 0, l = listeners.length; i < l; i++) {
+      listeners[i].apply(this, args);
+    }
+    return true;
+
+  } else {
+    return false;
+  }
+};
+
+// EventEmitter is defined in src/node_events.cc
+// EventEmitter.prototype.emit() is also defined there.
+EventEmitter.prototype.addListener = function(type, listener) {
+  if ('function' !== typeof listener) {
+    throw new Error('addListener only takes instances of Function');
+  }
+
+  if (!this._events) this._events = {};
+
+  // To avoid recursion in the case that type == "newListeners"! Before
+  // adding it to the listeners, first emit "newListeners".
+  this.emit('newListener', type, listener);
+
+  if (!this._events[type]) {
+    // Optimize the case of one listener. Don't need the extra array object.
+    this._events[type] = listener;
+  } else if (isArray(this._events[type])) {
+
+    // Check for listener leak
+    if (!this._events[type].warned) {
+      var m;
+      if (this._events.maxListeners !== undefined) {
+        m = this._events.maxListeners;
+      } else {
+        m = defaultMaxListeners;
+      }
+
+      if (m && m > 0 && this._events[type].length > m) {
+        this._events[type].warned = true;
+        console.error('(node) warning: possible EventEmitter memory ' +
+                      'leak detected. %d listeners added. ' +
+                      'Use emitter.setMaxListeners() to increase limit.',
+                      this._events[type].length);
+        console.trace();
+      }
+    }
+
+    // If we've already got an array, just append.
+    this._events[type].push(listener);
+  } else {
+    // Adding the second element, need to change to array.
+    this._events[type] = [this._events[type], listener];
+  }
+
+  return this;
+};
+
+EventEmitter.prototype.on = EventEmitter.prototype.addListener;
+
+EventEmitter.prototype.once = function(type, listener) {
+  var self = this;
+  self.on(type, function g() {
+    self.removeListener(type, g);
+    listener.apply(this, arguments);
+  });
+
+  return this;
+};
+
+EventEmitter.prototype.removeListener = function(type, listener) {
+  if ('function' !== typeof listener) {
+    throw new Error('removeListener only takes instances of Function');
+  }
+
+  // does not use listeners(), so no side effect of creating _events[type]
+  if (!this._events || !this._events[type]) return this;
+
+  var list = this._events[type];
+
+  if (isArray(list)) {
+    var i = indexOf(list, listener);
+    if (i < 0) return this;
+    list.splice(i, 1);
+    if (list.length == 0)
+      delete this._events[type];
+  } else if (this._events[type] === listener) {
+    delete this._events[type];
+  }
+
+  return this;
+};
+
+EventEmitter.prototype.removeAllListeners = function(type) {
+  if (arguments.length === 0) {
+    this._events = {};
+    return this;
+  }
+
+  // does not use listeners(), so no side effect of creating _events[type]
+  if (type && this._events && this._events[type]) this._events[type] = null;
+  return this;
+};
+
+EventEmitter.prototype.listeners = function(type) {
+  if (!this._events) this._events = {};
+  if (!this._events[type]) this._events[type] = [];
+  if (!isArray(this._events[type])) {
+    this._events[type] = [this._events[type]];
+  }
+  return this._events[type];
+};
+
+})(require("__browserify_process"))
+},{"__browserify_process":7}],9:[function(require,module,exports){
+// http://paulirish.com/2011/requestanimationframe-for-smart-animating/
+// http://my.opera.com/emoller/blog/2011/12/20/requestanimationframe-for-smart-er-animating
+ 
+// requestAnimationFrame polyfill by Erik Möller. fixes from Paul Irish and Tino Zijdel
+ 
+// MIT license
+var lastTime = 0;
+var vendors = ['ms', 'moz', 'webkit', 'o'];
+for(var x = 0; x < vendors.length && !window.requestAnimationFrame; ++x) {
+    window.requestAnimationFrame = window[vendors[x]+'RequestAnimationFrame'];
+    window.cancelAnimationFrame = window[vendors[x]+'CancelAnimationFrame'] 
+                               || window[vendors[x]+'CancelRequestAnimationFrame'];
+}
+
+if (!window.requestAnimationFrame)
+    window.requestAnimationFrame = function(callback, element) {
+        var currTime = new Date().getTime();
+        var timeToCall = Math.max(0, 16 - (currTime - lastTime));
+        var id = window.setTimeout(function() { callback(currTime + timeToCall); }, 
+          timeToCall);
+        lastTime = currTime + timeToCall;
+        return id;
+    };
+
+if (!window.cancelAnimationFrame)
+    window.cancelAnimationFrame = function(id) {
+        clearTimeout(id);
+    };
+
+},{}],10:[function(require,module,exports){
+//Adapted from here: https://developer.mozilla.org/en-US/docs/Web/Reference/Events/wheel?redirectlocale=en-US&redirectslug=DOM%2FMozilla_event_reference%2Fwheel
+
+var prefix = "", _addEventListener, onwheel, support;
+
+// detect event model
+if ( window.addEventListener ) {
+  _addEventListener = "addEventListener";
+} else {
+  _addEventListener = "attachEvent";
+  prefix = "on";
+}
+
+// detect available wheel event
+support = "onwheel" in document.createElement("div") ? "wheel" : // Modern browsers support "wheel"
+          document.onmousewheel !== undefined ? "mousewheel" : // Webkit and IE support at least "mousewheel"
+          "DOMMouseScroll"; // let's assume that remaining browsers are older Firefox
+
+function _addWheelListener( elem, eventName, callback, useCapture ) {
+  elem[ _addEventListener ]( prefix + eventName, support == "wheel" ? callback : function( originalEvent ) {
+    !originalEvent && ( originalEvent = window.event );
+
+    // create a normalized event object
+    var event = {
+      // keep a ref to the original event object
+      originalEvent: originalEvent,
+      target: originalEvent.target || originalEvent.srcElement,
+      type: "wheel",
+      deltaMode: originalEvent.type == "MozMousePixelScroll" ? 0 : 1,
+      deltaX: 0,
+      delatZ: 0,
+      preventDefault: function() {
+        originalEvent.preventDefault ?
+          originalEvent.preventDefault() :
+          originalEvent.returnValue = false;
+      }
+    };
+    
+    // calculate deltaY (and deltaX) according to the event
+    if ( support == "mousewheel" ) {
+      event.deltaY = - 1/40 * originalEvent.wheelDelta;
+      // Webkit also support wheelDeltaX
+      originalEvent.wheelDeltaX && ( event.deltaX = - 1/40 * originalEvent.wheelDeltaX );
+    } else {
+      event.deltaY = originalEvent.detail;
+    }
+
+    // it's time to fire the callback
+    return callback( event );
+  }, useCapture || false );
+}
+
+module.exports = function( elem, callback, useCapture ) {
+  _addWheelListener( elem, support, callback, useCapture );
+
+  // handle MozMousePixelScroll in older Firefox
+  if( support == "DOMMouseScroll" ) {
+    _addWheelListener( elem, "MozMousePixelScroll", callback, useCapture );
+  }
+};
+},{}],11:[function(require,module,exports){
+if(typeof window.performance === "object") {
+  if(window.performance.now) {
+    module.exports = function() { return window.performance.now() }
+  } else if(window.performance.webktiNow) {
+    module.exports = function() { return window.performance.webkitNow() }
+  }
+} else if(Date.now) {
+  module.exports = Date.now
+} else {
+  module.exports = function() { return (new Date()).getTime() }
+}
+},{}],12:[function(require,module,exports){
+var events = require('events');
+
+exports.isArray = isArray;
+exports.isDate = function(obj){return Object.prototype.toString.call(obj) === '[object Date]'};
+exports.isRegExp = function(obj){return Object.prototype.toString.call(obj) === '[object RegExp]'};
+
+
+exports.print = function () {};
+exports.puts = function () {};
+exports.debug = function() {};
+
+exports.inspect = function(obj, showHidden, depth, colors) {
+  var seen = [];
+
+  var stylize = function(str, styleType) {
+    // http://en.wikipedia.org/wiki/ANSI_escape_code#graphics
+    var styles =
+        { 'bold' : [1, 22],
+          'italic' : [3, 23],
+          'underline' : [4, 24],
+          'inverse' : [7, 27],
+          'white' : [37, 39],
+          'grey' : [90, 39],
+          'black' : [30, 39],
+          'blue' : [34, 39],
+          'cyan' : [36, 39],
+          'green' : [32, 39],
+          'magenta' : [35, 39],
+          'red' : [31, 39],
+          'yellow' : [33, 39] };
+
+    var style =
+        { 'special': 'cyan',
+          'number': 'blue',
+          'boolean': 'yellow',
+          'undefined': 'grey',
+          'null': 'bold',
+          'string': 'green',
+          'date': 'magenta',
+          // "name": intentionally not styling
+          'regexp': 'red' }[styleType];
+
+    if (style) {
+      return '\033[' + styles[style][0] + 'm' + str +
+             '\033[' + styles[style][1] + 'm';
+    } else {
+      return str;
+    }
+  };
+  if (! colors) {
+    stylize = function(str, styleType) { return str; };
+  }
+
+  function format(value, recurseTimes) {
+    // Provide a hook for user-specified inspect functions.
+    // Check that value is an object with an inspect function on it
+    if (value && typeof value.inspect === 'function' &&
+        // Filter out the util module, it's inspect function is special
+        value !== exports &&
+        // Also filter out any prototype objects using the circular check.
+        !(value.constructor && value.constructor.prototype === value)) {
+      return value.inspect(recurseTimes);
+    }
+
+    // Primitive types cannot have properties
+    switch (typeof value) {
+      case 'undefined':
+        return stylize('undefined', 'undefined');
+
+      case 'string':
+        var simple = '\'' + JSON.stringify(value).replace(/^"|"$/g, '')
+                                                 .replace(/'/g, "\\'")
+                                                 .replace(/\\"/g, '"') + '\'';
+        return stylize(simple, 'string');
+
+      case 'number':
+        return stylize('' + value, 'number');
+
+      case 'boolean':
+        return stylize('' + value, 'boolean');
+    }
+    // For some reason typeof null is "object", so special case here.
+    if (value === null) {
+      return stylize('null', 'null');
+    }
+
+    // Look up the keys of the object.
+    var visible_keys = Object_keys(value);
+    var keys = showHidden ? Object_getOwnPropertyNames(value) : visible_keys;
+
+    // Functions without properties can be shortcutted.
+    if (typeof value === 'function' && keys.length === 0) {
+      if (isRegExp(value)) {
+        return stylize('' + value, 'regexp');
+      } else {
+        var name = value.name ? ': ' + value.name : '';
+        return stylize('[Function' + name + ']', 'special');
+      }
+    }
+
+    // Dates without properties can be shortcutted
+    if (isDate(value) && keys.length === 0) {
+      return stylize(value.toUTCString(), 'date');
+    }
+
+    var base, type, braces;
+    // Determine the object type
+    if (isArray(value)) {
+      type = 'Array';
+      braces = ['[', ']'];
+    } else {
+      type = 'Object';
+      braces = ['{', '}'];
+    }
+
+    // Make functions say that they are functions
+    if (typeof value === 'function') {
+      var n = value.name ? ': ' + value.name : '';
+      base = (isRegExp(value)) ? ' ' + value : ' [Function' + n + ']';
+    } else {
+      base = '';
+    }
+
+    // Make dates with properties first say the date
+    if (isDate(value)) {
+      base = ' ' + value.toUTCString();
+    }
+
+    if (keys.length === 0) {
+      return braces[0] + base + braces[1];
+    }
+
+    if (recurseTimes < 0) {
+      if (isRegExp(value)) {
+        return stylize('' + value, 'regexp');
+      } else {
+        return stylize('[Object]', 'special');
+      }
+    }
+
+    seen.push(value);
+
+    var output = keys.map(function(key) {
+      var name, str;
+      if (value.__lookupGetter__) {
+        if (value.__lookupGetter__(key)) {
+          if (value.__lookupSetter__(key)) {
+            str = stylize('[Getter/Setter]', 'special');
+          } else {
+            str = stylize('[Getter]', 'special');
+          }
+        } else {
+          if (value.__lookupSetter__(key)) {
+            str = stylize('[Setter]', 'special');
+          }
+        }
+      }
+      if (visible_keys.indexOf(key) < 0) {
+        name = '[' + key + ']';
+      }
+      if (!str) {
+        if (seen.indexOf(value[key]) < 0) {
+          if (recurseTimes === null) {
+            str = format(value[key]);
+          } else {
+            str = format(value[key], recurseTimes - 1);
+          }
+          if (str.indexOf('\n') > -1) {
+            if (isArray(value)) {
+              str = str.split('\n').map(function(line) {
+                return '  ' + line;
+              }).join('\n').substr(2);
+            } else {
+              str = '\n' + str.split('\n').map(function(line) {
+                return '   ' + line;
+              }).join('\n');
+            }
+          }
+        } else {
+          str = stylize('[Circular]', 'special');
+        }
+      }
+      if (typeof name === 'undefined') {
+        if (type === 'Array' && key.match(/^\d+$/)) {
+          return str;
+        }
+        name = JSON.stringify('' + key);
+        if (name.match(/^"([a-zA-Z_][a-zA-Z_0-9]*)"$/)) {
+          name = name.substr(1, name.length - 2);
+          name = stylize(name, 'name');
+        } else {
+          name = name.replace(/'/g, "\\'")
+                     .replace(/\\"/g, '"')
+                     .replace(/(^"|"$)/g, "'");
+          name = stylize(name, 'string');
+        }
+      }
+
+      return name + ': ' + str;
+    });
+
+    seen.pop();
+
+    var numLinesEst = 0;
+    var length = output.reduce(function(prev, cur) {
+      numLinesEst++;
+      if (cur.indexOf('\n') >= 0) numLinesEst++;
+      return prev + cur.length + 1;
+    }, 0);
+
+    if (length > 50) {
+      output = braces[0] +
+               (base === '' ? '' : base + '\n ') +
+               ' ' +
+               output.join(',\n  ') +
+               ' ' +
+               braces[1];
+
+    } else {
+      output = braces[0] + base + ' ' + output.join(', ') + ' ' + braces[1];
+    }
+
+    return output;
+  }
+  return format(obj, (typeof depth === 'undefined' ? 2 : depth));
+};
+
+
+function isArray(ar) {
+  return ar instanceof Array ||
+         Array.isArray(ar) ||
+         (ar && ar !== Object.prototype && isArray(ar.__proto__));
+}
+
+
+function isRegExp(re) {
+  return re instanceof RegExp ||
+    (typeof re === 'object' && Object.prototype.toString.call(re) === '[object RegExp]');
+}
+
+
+function isDate(d) {
+  if (d instanceof Date) return true;
+  if (typeof d !== 'object') return false;
+  var properties = Date.prototype && Object_getOwnPropertyNames(Date.prototype);
+  var proto = d.__proto__ && Object_getOwnPropertyNames(d.__proto__);
+  return JSON.stringify(proto) === JSON.stringify(properties);
+}
+
+function pad(n) {
+  return n < 10 ? '0' + n.toString(10) : n.toString(10);
+}
+
+var months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep',
+              'Oct', 'Nov', 'Dec'];
+
+// 26 Feb 16:19:34
+function timestamp() {
+  var d = new Date();
+  var time = [pad(d.getHours()),
+              pad(d.getMinutes()),
+              pad(d.getSeconds())].join(':');
+  return [d.getDate(), months[d.getMonth()], time].join(' ');
+}
+
+exports.log = function (msg) {};
+
+exports.pump = null;
+
+var Object_keys = Object.keys || function (obj) {
+    var res = [];
+    for (var key in obj) res.push(key);
+    return res;
+};
+
+var Object_getOwnPropertyNames = Object.getOwnPropertyNames || function (obj) {
+    var res = [];
+    for (var key in obj) {
+        if (Object.hasOwnProperty.call(obj, key)) res.push(key);
+    }
+    return res;
+};
+
+var Object_create = Object.create || function (prototype, properties) {
+    // from es5-shim
+    var object;
+    if (prototype === null) {
+        object = { '__proto__' : null };
+    }
+    else {
+        if (typeof prototype !== 'object') {
+            throw new TypeError(
+                'typeof prototype[' + (typeof prototype) + '] != \'object\''
+            );
+        }
+        var Type = function () {};
+        Type.prototype = prototype;
+        object = new Type();
+        object.__proto__ = prototype;
+    }
+    if (typeof properties !== 'undefined' && Object.defineProperties) {
+        Object.defineProperties(object, properties);
+    }
+    return object;
+};
+
+exports.inherits = function(ctor, superCtor) {
+  ctor.super_ = superCtor;
+  ctor.prototype = Object_create(superCtor.prototype, {
+    constructor: {
+      value: ctor,
+      enumerable: false,
+      writable: true,
+      configurable: true
+    }
+  });
+};
+
+var formatRegExp = /%[sdj%]/g;
+exports.format = function(f) {
+  if (typeof f !== 'string') {
+    var objects = [];
+    for (var i = 0; i < arguments.length; i++) {
+      objects.push(exports.inspect(arguments[i]));
+    }
+    return objects.join(' ');
+  }
+
+  var i = 1;
+  var args = arguments;
+  var len = args.length;
+  var str = String(f).replace(formatRegExp, function(x) {
+    if (x === '%%') return '%';
+    if (i >= len) return x;
+    switch (x) {
+      case '%s': return String(args[i++]);
+      case '%d': return Number(args[i++]);
+      case '%j': return JSON.stringify(args[i++]);
+      default:
+        return x;
+    }
+  });
+  for(var x = args[i]; i < len; x = args[++i]){
+    if (x === null || typeof x !== 'object') {
+      str += ' ' + x;
+    } else {
+      str += ' ' + exports.inspect(x);
+    }
+  }
+  return str;
+};
+
+},{"events":8}],3:[function(require,module,exports){
+"use strict"
+
+var EventEmitter = require("events").EventEmitter
+  , util         = require("util")
+  , domready     = require("domready")
+  , vkey         = require("vkey")
+  , invert       = require("invert-hash")
+  , uniq         = require("uniq")
+  , bsearch      = require("binary-search-bounds")
+  , iota         = require("iota-array")
+  , min          = Math.min
+
+//Browser compatibility hacks
+require("./lib/raf-polyfill.js")
+var addMouseWheel = require("./lib/mousewheel-polyfill.js")
+var hrtime = require("./lib/hrtime-polyfill.js")
+
+//Remove angle braces and other useless crap
+var filtered_vkey = (function() {
+  var result = new Array(256)
+    , i, j, k
+  for(i=0; i<256; ++i) {
+    result[i] = "UNK"
+  }
+  for(i in vkey) {
+    k = vkey[i]
+    if(k.charAt(0) === '<' && k.charAt(k.length-1) === '>') {
+      k = k.substring(1, k.length-1)
+    }
+    k = k.replace(/\s/g, "-")
+    result[parseInt(i)] = k
+  }
+  return result
+})()
+
+//Compute minimal common set of keyboard functions
+var keyNames = uniq(Object.keys(invert(filtered_vkey)))
+
+//Translates a virtual keycode to a normalized keycode
+function virtualKeyCode(key) {
+  return bsearch.eq(keyNames, key)
+}
+
+//Maps a physical keycode to a normalized keycode
+function physicalKeyCode(key) {
+  return virtualKeyCode(filtered_vkey[key])
+}
+
+//Game shell
+function GameShell() {
+  EventEmitter.call(this)
+  this._curKeyState  = new Array(keyNames.length)
+  this._pressCount   = new Array(keyNames.length)
+  this._releaseCount = new Array(keyNames.length)
+  
+  this._tickInterval = null
+  this._rafHandle = null
+  this._tickRate = 0
+  this._lastTick = hrtime()
+  this._frameTime = 0.0
+  this._paused = true
+  this._width = 0
+  this._height = 0
+  
+  this._wantFullscreen = false
+  this._wantPointerLock = false
+  this._fullscreenActive = false
+  this._pointerLockActive = false
+  
+  this._render = render.bind(undefined, this)
+  
+  for(var i=0; i<keyNames.length; ++i) {
+    this._curKeyState[i] = false
+    this._pressCount[i] = this._releaseCount[i] = 0
+  }
+  
+  //Public members
+  this.element = null
+  this.bindings = {}
+  this.frameSkip = 100.0
+  this.tickCount = 0
+  this.frameCount = 0
+  this.startTime = hrtime()
+  this.tickTime = this._tickRate
+  this.frameTime = 10.0
+  this.stickyFullscreen = false
+  this.stuckyPointLock = false
+  
+  //Scroll stuff
+  this.scroll = [0,0,0]
+    
+  //Mouse state
+  this.mouseX = 0
+  this.mouseY = 0
+  this.prevMouseX = 0
+  this.prevMouseY = 0
+}
+
+util.inherits(GameShell, EventEmitter)
+
+var proto = GameShell.prototype
+
+//Bind keynames
+proto.keyNames = keyNames
+
+//Binds a virtual keyboard event to a physical key
+proto.bind = function(virtual_key) {
+  //Look up previous key bindings
+  var arr
+  if(virtual_key in this.bindings) {
+    arr = this.bindings[virtual_key]
+  } else {
+    arr = []
+  }
+  //Add keys to list
+  var physical_key
+  for(var i=1, n=arguments.length; i<n; ++i) {
+    physical_key = arguments[i]
+    if(virtualKeyCode(physical_key) >= 0) {
+      arr.push(physical_key)
+    } else if(physical_key in this.bindings) {
+      var keybinds = this.bindings[physical_key]
+      for(var j=0; j<keybinds.length; ++j) {
+        arr.push(keybinds[j])
+      }
+    }
+  }
+  //Remove any duplicate keys
+  arr = uniq(arr)
+  if(arr.length > 0) {
+    this.bindings[virtual_key] = arr
+  }
+}
+
+//Unbinds a virtual keyboard event
+proto.unbind = function(virtual_key) {
+  if(virtual_key in this.bindings) {
+    delete this.bindings[virtual_key]
+  }
+}
+
+//Checks if a key is set in a given state
+function lookupKey(state, bindings, key) {
+  if(key in bindings) {
+    var arr = bindings[key]
+    for(var i=0, n=arr.length; i<n; ++i) {
+      if(state[virtualKeyCode(arr[i])]) {
+        return true
+      }
+    }
+    return false
+  }
+  var kc = virtualKeyCode(key)
+  if(kc >= 0) {
+    return state[kc]
+  }
+  return false
+}
+
+//Checks if a key is set in a given state
+function lookupCount(state, bindings, key) {
+  if(key in bindings) {
+    var arr = bindings[key], r = 0
+    for(var i=0, n=arr.length; i<n; ++i) {
+      r += state[virtualKeyCode(arr[i])]
+    }
+    return r
+  }
+  var kc = virtualKeyCode(key)
+  if(kc >= 0) {
+    return state[kc]
+  }
+  return 0
+}
+
+//Checks if a key (either physical or virtual) is currently held down
+proto.down = function(key) {
+  return lookupKey(this._curKeyState, this.bindings, key)
+}
+
+//Checks if a key was ever down
+proto.wasDown = function(key) {
+  return this.down(key) || !!this.press(key)
+}
+
+//Opposite of down
+proto.up = function(key) {
+  return !this.down(key)
+}
+
+//Checks if a key was released during previous frame
+proto.wasUp = function(key) {
+  return this.up(key) || !!this.release(key)
+}
+
+//Returns the number of times a key was pressed since last tick
+proto.press = function(key) {
+  return lookupCount(this._pressCount, this.bindings, key)
+}
+
+//Returns the number of times a key was released since last tick
+proto.release = function(key) {
+  return lookupCount(this._releaseCount, this.bindings, key)
+}
+
+//Pause/unpause the game loop
+Object.defineProperty(proto, "paused", {
+  get: function() {
+    return this._paused
+  },
+  set: function(state) {
+    var ns = !!state
+    if(ns !== this._paused) {
+      if(!this._paused) {
+        this._paused = true
+        this._frameTime = min(1.0, (hrtime() - this._lastTick) / this._tickRate)
+        clearInterval(this._tickInterval)
+        //cancelAnimationFrame(this._rafHandle)
+      } else {
+        this._paused = false
+        this._lastTick = hrtime() - Math.floor(this._frameTime * this._tickRate)
+        this._tickInterval = setInterval(tick, this._tickRate, this)
+        this._rafHandle = requestAnimationFrame(this._render)
+      }
+    }
+  }
+})
+
+//Fullscreen state toggle
+
+function tryFullscreen(shell) {
+  //Request full screen
+  var elem = shell.element
+  
+  if(shell._wantFullscreen && !shell._fullscreenActive) {
+    var fs = elem.requestFullscreen ||
+             elem.requestFullScreen ||
+             elem.webkitRequestFullscreen ||
+             elem.webkitRequestFullScreen ||
+             elem.mozRequestFullscreen ||
+             elem.mozRequestFullScreen ||
+             function() {}
+    fs.call(elem)
+  }
+  if(shell._wantPointerLock && !shell._pointerLockActive) {
+    var pl =  elem.requestPointerLock ||
+              elem.webkitRequestPointerLock ||
+              elem.mozRequestPointerLock ||
+              elem.msRequestPointerLock ||
+              elem.oRequestPointerLock ||
+              function() {}
+    pl.call(elem)
+  }
+}
+
+var cancelFullscreen = document.exitFullscreen ||
+                       document.cancelFullscreen ||  //Why can no one agree on this?
+                       document.cancelFullScreen ||
+                       document.webkitCancelFullscreen ||
+                       document.webkitCancelFullScreen ||
+                       document.mozCancelFullscreen ||
+                       document.mozCancelFullScreen ||
+                       function(){}
+
+Object.defineProperty(proto, "fullscreen", {
+  get: function() {
+    return this._fullscreenActive
+  },
+  set: function(state) {
+    var ns = !!state
+    if(!ns) {
+      this._wantFullscreen = false
+      cancelFullscreen.call(document)
+    } else {
+      this._wantFullscreen = true
+      tryFullscreen(this)
+    }
+    return this._fullscreenActive
+  }
+})
+
+function handleFullscreen(shell) {
+  shell._fullscreenActive = document.fullscreen ||
+                            document.mozFullScreen ||
+                            document.webkitIsFullScreen ||
+                            false
+  if(!shell.stickyFullscreen && shell._fullscreenActive) {
+    shell._wantFullscreen = false
+  }
+}
+
+//Pointer lock state toggle
+var exitPointerLock = document.exitPointerLock ||
+                      document.webkitExitPointerLock ||
+                      document.mozExitPointerLock ||
+                      function() {}
+
+Object.defineProperty(proto, "pointerLock", {
+  get: function() {
+    return this._pointerLockActive
+  },
+  set: function(state) {
+    var ns = !!state
+    if(!ns) {
+      this._wantPointerLock = false
+      exitPointerLock.call(document)
+    } else {
+      this._wantPointerLock = true
+      tryFullscreen(this)
+    }
+    return this._pointerLockActive
+  }
+})
+
+function handlePointerLockChange(shell, event) {
+  shell._pointerLockActive = shell.element === (
+      document.pointerLockElement ||
+      document.mozPointerLockElement ||
+      document.webkitPointerLockElement ||
+      null)
+  if(!shell.stickyPointerLock && shell._pointerLockActive) {
+    shell._wantPointerLock = false
+  }
+}
+
+//Width and height
+Object.defineProperty(proto, "width", {
+  get: function() {
+    return this.element.clientWidth
+  }
+})
+Object.defineProperty(proto, "height", {
+  get: function() {
+    return this.element.clientHeight
+  }
+})
+
+//Set key state
+function setKeyState(shell, key, state) {
+  var ps = shell._curKeyState[key]
+  if(ps !== state) {
+    if(state) {
+      shell._pressCount[key]++
+    } else {
+      shell._releaseCount[key]++
+    }
+    shell._curKeyState[key] = state
+  }
+}
+
+//Ticks the game state one update
+function tick(shell) {
+  var skip = hrtime() + shell.frameSkip
+    , pCount = shell._pressCount
+    , rCount = shell._releaseCount
+    , i, s, t
+    , tr = shell._tickRate
+    , n = keyNames.length
+  while(!shell._paused &&
+        hrtime() >= shell._lastTick + tr) {
+    
+    //Skip frames if we are over budget
+    if(hrtime() > skip) {
+      shell._lastTick = hrtime() + tr
+      return
+    }
+    
+    //Tick the game
+    s = hrtime()
+    shell.emit("tick")
+    t = hrtime()
+    shell.tickTime = t - s
+    
+    //Update counters and time
+    ++shell.tickCount
+    shell._lastTick += tr
+    
+    //Shift input state
+    for(i=0; i<n; ++i) {
+      pCount[i] = rCount[i] = 0
+    }
+    if(shell._pointerLockActive) {
+      shell.prevMouseX = shell.mouseX = shell.width>>1
+      shell.prevMouseY = shell.mouseY = shell.height>>1
+    } else {
+      shell.prevMouseX = shell.mouseX
+      shell.prevMouseY = shell.mouseY
+    }
+    shell.scroll[0] = shell.scroll[1] = shell.scroll[2] = 0
+  }
+}
+
+//Render stuff
+function render(shell) {
+
+  //Request next frame
+  shell._rafHandle = requestAnimationFrame(shell._render)
+
+  //Tick the shell
+  tick(shell)
+  
+  //Compute frame time
+  var dt
+  if(shell._paused) {
+    dt = shell._frameTime
+  } else {
+    dt = min(1.0, (hrtime() - shell._lastTick) / shell._tickRate)
+  }
+  
+  //Draw a frame
+  ++shell.frameCount
+  var s = hrtime()
+  shell.emit("render", dt)
+  var t = hrtime()
+  shell.frameTime = t - s
+  
+}
+
+function isFocused(shell) {
+  return (document.activeElement === document.body) ||
+         (document.activeElement === shell.element)
+}
+
+//Set key up
+function handleKeyUp(shell, ev) {
+  ev.preventDefault()
+  var kc = physicalKeyCode(ev.keyCode || ev.char || ev.which || ev.charCode)
+  if(kc >= 0) {
+    setKeyState(shell, kc, false)
+  }
+}
+
+//Set key down
+function handleKeyDown(shell, ev) {
+  if(!isFocused(shell)) {
+    return
+  }
+  if(ev.metaKey) {
+    //Hack: Clear key state when meta gets pressed to prevent keys sticking
+    handleBlur(shell, ev)
+  } else {
+    ev.preventDefault()
+    var kc = physicalKeyCode(ev.keyCode || ev.char || ev.which || ev.charCode)
+    if(kc >= 0) {
+      setKeyState(shell, kc, true)
+    }
+  }
+}
+
+//Mouse events are really annoying
+var mouseCodes = iota(32).map(function(n) {
+  return virtualKeyCode("mouse-" + (n+1))
+})
+
+function setMouseButtons(shell, buttons) {
+  for(var i=0; i<32; ++i) {
+    setKeyState(shell, mouseCodes[i], !!(buttons & (1<<i)))
+  }
+}
+
+function handleMouseMove(shell, ev) {
+  if(shell._pointerLockActive) {
+    var movementX = ev.movementX       ||
+                    ev.mozMovementX    ||
+                    ev.webkitMovementX ||
+                    0,
+        movementY = ev.movementY       ||
+                    ev.mozMovementY    ||
+                    ev.webkitMovementY ||
+                    0
+    shell.mouseX += movementX
+    shell.mouseY += movementY
+  } else {
+    shell.mouseX = ev.clientX - shell.element.offsetLeft
+    shell.mouseY = ev.clientY - shell.element.offsetTop
+  }
+  return false
+}
+
+function handleMouseDown(shell, ev) {
+  setKeyState(shell, mouseCodes[ev.button], true)
+  return false
+}
+
+function handleMouseUp(shell, ev) {
+  setKeyState(shell, mouseCodes[ev.button], false)
+  return false
+}
+
+function handleMouseEnter(shell, ev) {
+  if(shell._pointerLockActive) {
+    shell.prevMouseX = shell.mouseX = shell.width>>1
+    shell.prevMouseY = shell.mouseY = shell.height>>1
+  } else {
+    shell.prevMouseX = shell.mouseX = ev.clientX - shell.element.offsetLeft
+    shell.prevMouseY = shell.mouseY = ev.clientY - shell.element.offsetTop
+  }
+  return false
+}
+
+function handleMouseLeave(shell, ev) {
+  setMouseButtons(shell, 0)
+  return false
+}
+
+//Handle mouse wheel events
+function handleMouseWheel(shell, ev) {
+  var scale = 1
+  switch(ev.deltaMode) {
+    case 0: //Pixel
+      scale = 1
+    break
+    case 1: //Line
+      scale = 12
+    break
+    case 2: //Page
+       scale = shell.height
+    break
+  }
+  //Add scroll
+  shell.scroll[0] +=  ev.deltaX * scale
+  shell.scroll[1] +=  ev.deltaY * scale
+  shell.scroll[2] += (ev.deltaZ * scale)||0.0
+  return false
+}
+
+function handleContexMenu(shell, ev) {
+  return false
+}
+
+function handleBlur(shell, ev) {
+  var n = keyNames.length
+    , c = shell._curKeyState
+    , r = shell._releaseCount
+    , i
+  for(i=0; i<n; ++i) {
+    if(c[i]) {
+      ++r[i]
+    }
+    c[i] = false
+  }
+  return false
+}
+
+function handleResizeElement(shell, ev) {
+  var w = shell.element.clientWidth|0
+  var h = shell.element.clientHeight|0
+  if((w !== shell._width) || (h !== shell._height)) {
+    shell._width = w
+    shell._height = h
+    shell.emit("resize", w, h)
+  }
+}
+
+function makeDefaultContainer() {
+  var container = document.createElement("div")
+  container.tabindex = 1
+  container.style.position = "absolute"
+  container.style.left = "0px"
+  container.style.right = "0px"
+  container.style.top = "0px"
+  container.style.bottom = "0px"
+  container.style.height = "100%"
+  container.style.overflow = "hidden"
+  document.body.appendChild(container)
+  document.body.style.overflow = "hidden" //Prevent bounce
+  document.body.style.height = "100%"
+  return container
+}
+
+function createShell(options) {
+  options = options || {}
+  
+  //Check fullscreen and pointer lock flags
+  var useFullscreen = !!options.fullscreen
+  var usePointerLock = useFullscreen
+  if(typeof options.pointerLock !== undefined) {
+    usePointerLock = !!options.pointerLock
+  }
+  
+  //Create initial shell
+  var shell = new GameShell()
+  shell._tickRate = options.tickRate || 30
+  shell.frameSkip = options.frameSkip || (shell._tickRate+5) * 5
+  shell.stickyFullscreen = !!options.stickyFullscreen || !!options.sticky
+  shell.stickyPointerLock = !!options.stickPointerLock || !options.sticky
+  
+  //Set bindings
+  if(options.bindings) {
+    shell.bindings = bindings
+  }
+  
+  //Wait for dom to intiailize
+  setTimeout(function() { domready(function initGameShell() {
+    
+    //Retrieve element
+    var element = options.element
+    if(typeof element === "string") {
+      var e = document.querySelector(element)
+      if(!e) {
+        e = document.getElementById(element)
+      }
+      if(!e) {
+        e = document.getElementByClass(element)[0]
+      }
+      if(!e) {
+        e = makeDefaultContainer()
+      }
+      shell.element = e
+    } else if(typeof element === "object" && !!element) {
+      shell.element = element
+    } else if(typeof element === "function") {
+      shell.element = element()
+    } else {
+      shell.element = makeDefaultContainer()
+    }
+    
+    //Disable user-select
+    if(shell.element.style) {
+      shell.element.style["-webkit-touch-callout"] = "none"
+      shell.element.style["-webkit-user-select"] = "none"
+      shell.element.style["-khtml-user-select"] = "none"
+      shell.element.style["-moz-user-select"] = "none"
+      shell.element.style["-ms-user-select"] = "none"
+      shell.element.style["user-select"] = "none"
+    }
+    
+    //Hook resize handler
+    shell._width = shell.element.clientWidth
+    shell._height = shell.element.clientHeight
+    var handleResize = handleResizeElement.bind(undefined, shell)
+    if(typeof MutationObserver !== "undefined") {
+      var observer = new MutationObserver(handleResize)
+      observer.observe(shell.element, {
+        attributes: true,
+        subtree: true
+      })
+    } else {
+      shell.element.addEventListener("DOMSubtreeModified", handleResize, false)
+    }
+    window.addEventListener("resize", handleResize, false)
+    
+    //Hook keyboard listener
+    window.addEventListener("keydown", handleKeyDown.bind(undefined, shell), false)
+    window.addEventListener("keyup", handleKeyUp.bind(undefined, shell), false)
+    
+    //Disable right click
+    shell.element.oncontextmenu = handleContexMenu.bind(undefined, shell)
+    
+    //Hook mouse listeners
+    shell.element.addEventListener("mousedown", handleMouseDown.bind(undefined, shell), false)
+    shell.element.addEventListener("mouseup", handleMouseUp.bind(undefined, shell), false)
+    shell.element.addEventListener("mousemove", handleMouseMove.bind(undefined, shell), false)
+    shell.element.addEventListener("mouseenter", handleMouseEnter.bind(undefined, shell), false)
+    
+    //Mouse leave
+    var leave = handleMouseLeave.bind(undefined, shell)
+    shell.element.addEventListener("mouseleave", leave, false)
+    shell.element.addEventListener("mouseout", leave, false)
+    window.addEventListener("mouseleave", leave, false)
+    window.addEventListener("mouseout", leave, false)
+    
+    //Blur event 
+    var blur = handleBlur.bind(undefined, shell)
+    shell.element.addEventListener("blur", blur, false)
+    shell.element.addEventListener("focusout", blur, false)
+    shell.element.addEventListener("focus", blur, false)
+    window.addEventListener("blur", blur, false)
+    window.addEventListener("focusout", blur, false)
+    window.addEventListener("focus", blur, false)
+
+    //Mouse wheel handler
+    addMouseWheel(shell.element, handleMouseWheel.bind(undefined, shell), false)
+
+    //Fullscreen handler
+    var fullscreenChange = handleFullscreen.bind(undefined, shell)
+    document.addEventListener("fullscreenchange", fullscreenChange, false)
+    document.addEventListener("mozfullscreenchange", fullscreenChange, false)
+    document.addEventListener("webkitfullscreenchange", fullscreenChange, false)
+
+    //Stupid fullscreen hack
+    shell.element.addEventListener("click", tryFullscreen.bind(undefined, shell), false)
+
+    //Pointer lock change handler
+    var pointerLockChange = handlePointerLockChange.bind(undefined, shell)
+    document.addEventListener("pointerlockchange", pointerLockChange, false)
+    document.addEventListener("mozpointerlockchange", pointerLockChange, false)
+    document.addEventListener("webkitpointerlockchange", pointerLockChange, false)
+    document.addEventListener("pointerlocklost", pointerLockChange, false)
+    document.addEventListener("webkitpointerlocklost", pointerLockChange, false)
+    document.addEventListener("mozpointerlocklost", pointerLockChange, false)
+    
+    //Update flags
+    shell.fullscreen = useFullscreen
+    shell.pointerLock = usePointerLock
+  
+    //Default mouse button aliases
+    shell.bind("mouse-left",   "mouse-1")
+    shell.bind("mouse-right",  "mouse-3")
+    shell.bind("mouse-middle", "mouse-2")
+    
+    //Initialize tick counter
+    shell._lastTick = hrtime()
+    shell.startTime = hrtime()
+
+    //Unpause shell
+    shell.paused = false
+    
+    //Emit initialize event
+    shell.emit("init")
+  })}, 0)
+  
+  return shell
+}
+
+module.exports = createShell
+},{"events":8,"util":12,"./lib/raf-polyfill.js":9,"./lib/mousewheel-polyfill.js":10,"./lib/hrtime-polyfill.js":11,"domready":13,"vkey":14,"invert-hash":15,"binary-search-bounds":16,"uniq":17,"iota-array":18}],4:[function(require,module,exports){
+"use strict"
+
+var createTriangulation = require("incremental-delaunay")
+var sc = require("simplicial-complex")
+
+module.exports = triangulate
+
+function triangulate(points) {
+  if(points.length === 0) {
+    return []
+  }
+  var dimension = points[0].length
+  var triangulation = createTriangulation(dimension)
+  for(var i=0; i<points.length; ++i) {
+    triangulation.insert(points[i])
+  }
+  var cells = []
+outer_loop:
+  for(var cur=triangulation.prev; cur!==triangulation; cur=cur.prev) {
+    var v = cur.vertices
+    for(var i=0; i<v.length; ++i) {
+      if(v[i] <= dimension) {
+        continue outer_loop
+      }
+      v[i] -= dimension + 1
+    }
+    cells.push(v)
+  }
+  return sc.normalize(cells)
+}
+},{"incremental-delaunay":19,"simplicial-complex":20}],13:[function(require,module,exports){
+/*!
+  * domready (c) Dustin Diaz 2012 - License MIT
+  */
+!function (name, definition) {
+  if (typeof module != 'undefined') module.exports = definition()
+  else if (typeof define == 'function' && typeof define.amd == 'object') define(definition)
+  else this[name] = definition()
+}('domready', function (ready) {
+
+  var fns = [], fn, f = false
+    , doc = document
+    , testEl = doc.documentElement
+    , hack = testEl.doScroll
+    , domContentLoaded = 'DOMContentLoaded'
+    , addEventListener = 'addEventListener'
+    , onreadystatechange = 'onreadystatechange'
+    , readyState = 'readyState'
+    , loadedRgx = hack ? /^loaded|^c/ : /^loaded|c/
+    , loaded = loadedRgx.test(doc[readyState])
+
+  function flush(f) {
+    loaded = 1
+    while (f = fns.shift()) f()
+  }
+
+  doc[addEventListener] && doc[addEventListener](domContentLoaded, fn = function () {
+    doc.removeEventListener(domContentLoaded, fn, f)
+    flush()
+  }, f)
+
+
+  hack && doc.attachEvent(onreadystatechange, fn = function () {
+    if (/^c/.test(doc[readyState])) {
+      doc.detachEvent(onreadystatechange, fn)
+      flush()
+    }
+  })
+
+  return (ready = hack ?
+    function (fn) {
+      self != top ?
+        loaded ? fn() : fns.push(fn) :
+        function () {
+          try {
+            testEl.doScroll('left')
+          } catch (e) {
+            return setTimeout(function() { ready(fn) }, 50)
+          }
+          fn()
+        }()
+    } :
+    function (fn) {
+      loaded ? fn() : fns.push(fn)
+    })
+})
+
+},{}],14:[function(require,module,exports){
+(function(){var ua = typeof window !== 'undefined' ? window.navigator.userAgent : ''
+  , isOSX = /OS X/.test(ua)
+  , isOpera = /Opera/.test(ua)
+  , maybeFirefox = !/like Gecko/.test(ua) && !isOpera
+
+var i, output = module.exports = {
+  0:  isOSX ? '<menu>' : '<UNK>'
+, 1:  '<mouse 1>'
+, 2:  '<mouse 2>'
+, 3:  '<break>'
+, 4:  '<mouse 3>'
+, 5:  '<mouse 4>'
+, 6:  '<mouse 5>'
+, 8:  '<backspace>'
+, 9:  '<tab>'
+, 12: '<clear>'
+, 13: '<enter>'
+, 16: '<shift>'
+, 17: '<control>'
+, 18: '<alt>'
+, 19: '<pause>'
+, 20: '<caps-lock>'
+, 21: '<ime-hangul>'
+, 23: '<ime-junja>'
+, 24: '<ime-final>'
+, 25: '<ime-kanji>'
+, 27: '<escape>'
+, 28: '<ime-convert>'
+, 29: '<ime-nonconvert>'
+, 30: '<ime-accept>'
+, 31: '<ime-mode-change>'
+, 27: '<escape>'
+, 32: '<space>'
+, 33: '<page-up>'
+, 34: '<page-down>'
+, 35: '<end>'
+, 36: '<home>'
+, 37: '<left>'
+, 38: '<up>'
+, 39: '<right>'
+, 40: '<down>'
+, 41: '<select>'
+, 42: '<print>'
+, 43: '<execute>'
+, 44: '<snapshot>'
+, 45: '<insert>'
+, 46: '<delete>'
+, 47: '<help>'
+, 91: '<meta>'  // meta-left -- no one handles left and right properly, so we coerce into one.
+, 92: '<meta>'  // meta-right
+, 93: isOSX ? '<meta>' : '<menu>'      // chrome,opera,safari all report this for meta-right (osx mbp).
+, 95: '<sleep>'
+, 106: '<num-*>'
+, 107: '<num-+>'
+, 108: '<num-enter>'
+, 109: '<num-->'
+, 110: '<num-.>'
+, 111: '<num-/>'
+, 144: '<num-lock>'
+, 145: '<scroll-lock>'
+, 160: '<shift-left>'
+, 161: '<shift-right>'
+, 162: '<control-left>'
+, 163: '<control-right>'
+, 164: '<alt-left>'
+, 165: '<alt-right>'
+, 166: '<browser-back>'
+, 167: '<browser-forward>'
+, 168: '<browser-refresh>'
+, 169: '<browser-stop>'
+, 170: '<browser-search>'
+, 171: '<browser-favorites>'
+, 172: '<browser-home>'
+
+  // ff/osx reports '<volume-mute>' for '-'
+, 173: isOSX && maybeFirefox ? '-' : '<volume-mute>'
+, 174: '<volume-down>'
+, 175: '<volume-up>'
+, 176: '<next-track>'
+, 177: '<prev-track>'
+, 178: '<stop>'
+, 179: '<play-pause>'
+, 180: '<launch-mail>'
+, 181: '<launch-media-select>'
+, 182: '<launch-app 1>'
+, 183: '<launch-app 2>'
+, 186: ';'
+, 187: '='
+, 188: ','
+, 189: '-'
+, 190: '.'
+, 191: '/'
+, 192: '`'
+, 219: '['
+, 220: '\\'
+, 221: ']'
+, 222: "'"
+, 223: '<meta>'
+, 224: '<meta>'       // firefox reports meta here.
+, 226: '<alt-gr>'
+, 229: '<ime-process>'
+, 231: isOpera ? '`' : '<unicode>'
+, 246: '<attention>'
+, 247: '<crsel>'
+, 248: '<exsel>'
+, 249: '<erase-eof>'
+, 250: '<play>'
+, 251: '<zoom>'
+, 252: '<no-name>'
+, 253: '<pa-1>'
+, 254: '<clear>'
+}
+
+for(i = 58; i < 65; ++i) {
+  output[i] = String.fromCharCode(i)
+}
+
+// 0-9
+for(i = 48; i < 58; ++i) {
+  output[i] = (i - 48)+''
+}
+
+// A-Z
+for(i = 65; i < 91; ++i) {
+  output[i] = String.fromCharCode(i)
+}
+
+// num0-9
+for(i = 96; i < 106; ++i) {
+  output[i] = '<num-'+(i - 96)+'>'
+}
+
+// F1-F24
+for(i = 112; i < 136; ++i) {
+  output[i] = 'F'+(i-111)
+}
+
+})()
+},{}],15:[function(require,module,exports){
+"use strict"
+
+function invert(hash) {
+  var result = {}
+  for(var i in hash) {
+    if(hash.hasOwnProperty(i)) {
+      result[hash[i]] = i
+    }
+  }
+  return result
+}
+
+module.exports = invert
+},{}],16:[function(require,module,exports){
+"use strict"
+
+function compileSearch(funcName, predicate, reversed, extraArgs, useNdarray, earlyOut) {
+  var code = [
+    "function ", funcName, "(a,l,h,", extraArgs.join(","),  "){",
+earlyOut ? "" : "var i=", (reversed ? "l-1" : "h+1"),
+";while(l<=h){\
+var m=(l+h)>>>1,x=a", useNdarray ? ".get(m)" : "[m]"]
+  if(earlyOut) {
+    if(predicate.indexOf("c") < 0) {
+      code.push(";if(x===y){return m}else if(x<=y){")
+    } else {
+      code.push(";var p=c(x,y);if(p===0){return m}else if(p<=0){")
+    }
+  } else {
+    code.push(";if(", predicate, "){i=m;")
+  }
+  if(reversed) {
+    code.push("l=m+1}else{h=m-1}")
+  } else {
+    code.push("h=m-1}else{l=m+1}")
+  }
+  code.push("}")
+  if(earlyOut) {
+    code.push("return -1};")
+  } else {
+    code.push("return i};")
+  }
+  return code.join("")
+}
+
+function compileBoundsSearch(predicate, reversed, suffix, earlyOut) {
+  var result = new Function([
+  compileSearch("A", "x" + predicate + "y", reversed, ["y"], false, earlyOut),
+  compileSearch("B", "x" + predicate + "y", reversed, ["y"], true, earlyOut),
+  compileSearch("P", "c(x,y)" + predicate + "0", reversed, ["y", "c"], false, earlyOut),
+  compileSearch("Q", "c(x,y)" + predicate + "0", reversed, ["y", "c"], true, earlyOut),
+"function dispatchBsearch", suffix, "(a,y,c,l,h){\
+if(a.shape){\
+if(typeof(c)==='function'){\
+return Q(a,(l===undefined)?0:l|0,(h===undefined)?a.shape[0]-1:h|0,y,c)\
+}else{\
+return B(a,(c===undefined)?0:c|0,(l===undefined)?a.shape[0]-1:l|0,y)\
+}}else{\
+if(typeof(c)==='function'){\
+return P(a,(l===undefined)?0:l|0,(h===undefined)?a.length-1:h|0,y,c)\
+}else{\
+return A(a,(c===undefined)?0:c|0,(l===undefined)?a.length-1:l|0,y)\
+}}}\
+return dispatchBsearch", suffix].join(""))
+  return result()
+}
+
+module.exports = {
+  ge: compileBoundsSearch(">=", false, "GE"),
+  gt: compileBoundsSearch(">", false, "GT"),
+  lt: compileBoundsSearch("<", true, "LT"),
+  le: compileBoundsSearch("<=", true, "LE"),
+  eq: compileBoundsSearch("-", true, "EQ", true)
+}
+
+},{}],17:[function(require,module,exports){
+"use strict"
+
+function unique_pred(list, compare) {
+  var ptr = 1
+    , len = list.length
+    , a=list[0], b=list[0]
+  for(var i=1; i<len; ++i) {
+    b = a
+    a = list[i]
+    if(compare(a, b)) {
+      if(i === ptr) {
+        ptr++
+        continue
+      }
+      list[ptr++] = a
+    }
+  }
+  list.length = ptr
+  return list
+}
+
+function unique_eq(list) {
+  var ptr = 1
+    , len = list.length
+    , a=list[0], b = list[0]
+  for(var i=1; i<len; ++i, b=a) {
+    b = a
+    a = list[i]
+    if(a !== b) {
+      if(i === ptr) {
+        ptr++
+        continue
+      }
+      list[ptr++] = a
+    }
+  }
+  list.length = ptr
+  return list
+}
+
+function unique(list, compare, sorted) {
+  if(list.length === 0) {
+    return []
+  }
+  if(compare) {
+    if(!sorted) {
+      list.sort(compare)
+    }
+    return unique_pred(list, compare)
+  }
+  if(!sorted) {
+    list.sort()
+  }
+  return unique_eq(list)
+}
+
+module.exports = unique
+},{}],18:[function(require,module,exports){
+"use strict"
+
+function iota(n) {
+  var result = new Array(n)
+  for(var i=0; i<n; ++i) {
+    result[i] = i
+  }
+  return result
+}
+
+module.exports = iota
+},{}],6:[function(require,module,exports){
+"use strict"
+
+module.exports = createSlabDecomposition
+
+var bounds = require("binary-search-bounds")
+var createRBTree = require("functional-red-black-tree")
+var orient = require("robust-orientation")
+var orderSegments = require("./lib/order-segments")
+
+function SlabDecomposition(slabs, coordinates, horizontal) {
+  this.slabs = slabs
+  this.coordinates = coordinates
+  this.horizontal = horizontal
+}
+
+var proto = SlabDecomposition.prototype
+
+function compareHorizontal(e, y) {
+  return e.y - y
+}
+
+function searchBucket(root, p) {
+  var lastNode = null
+  while(root) {
+    var seg = root.key
+    var l, r
+    if(seg[0][0] < seg[1][0]) {
+      l = seg[0]
+      r = seg[1]
+    } else {
+      l = seg[1]
+      r = seg[0]
+    }
+    var o = orient(l, r, p)
+    if(o < 0) {
+      root = root.left
+    } else if(o > 0) {
+      if(p[0] !== seg[1][0]) {
+        lastNode = root
+        root = root.right
+      } else {
+        var val = searchBucket(root.right, p)
+        if(val) {
+          return val
+        }
+        root = root.left
+      }
+    } else {
+      if(p[0] !== seg[1][0]) {
+        return root
+      } else {
+        var val = searchBucket(root.right, p)
+        if(val) {
+          return val
+        }
+        root = root.left
+      }
+    }
+  }
+  return lastNode
+}
+
+proto.castUp = function(p) {
+  var bucket = bounds.le(this.coordinates, p[0])
+  if(bucket < 0) {
+    return -1
+  }
+  var root = this.slabs[bucket]
+  var hitNode = searchBucket(this.slabs[bucket], p)
+  var lastHit = -1
+  if(hitNode) {
+    lastHit = hitNode.value
+  }
+  //Edge case: need to handle horizontal segments (sucks)
+  if(this.coordinates[bucket] === p[0]) {
+    var lastSegment = null
+    if(hitNode) {
+      lastSegment = hitNode.key
+    }
+    if(bucket > 0) {
+      var otherHitNode = searchBucket(this.slabs[bucket-1], p)
+      if(otherHitNode) {
+        if(lastSegment) {
+          if(orderSegments(otherHitNode.key, lastSegment) > 0) {
+            lastSegment = otherHitNode.key
+            lastHit = otherHitNode.value
+          }
+        } else {
+          lastHit = otherHitNode.value
+          lastSegment = otherHitNode.key
+        }
+      }
+    }
+    var horiz = this.horizontal[bucket]
+    if(horiz.length > 0) {
+      var hbucket = bounds.ge(horiz, p[1], compareHorizontal)
+      if(hbucket < horiz.length) {
+        var e = horiz[hbucket]
+        if(p[1] === e.y) {
+          if(e.closed) {
+            return e.index
+          } else {
+            while(hbucket < horiz.length-1 && horiz[hbucket+1].y === p[1]) {
+              hbucket = hbucket+1
+              e = horiz[hbucket]
+              if(e.closed) {
+                return e.index
+              }
+            }
+            if(e.y === p[1] && !e.start) {
+              hbucket = hbucket+1
+              if(hbucket >= horiz.length) {
+                return lastHit
+              }
+              e = horiz[hbucket]
+            }
+          }
+        }
+        //Check if e is above/below last segment
+        if(e.start) {
+          if(lastSegment) {
+            var o = orient(lastSegment[0], lastSegment[1], [p[0], e.y])
+            if(lastSegment[0][0] > lastSegment[1][0]) {
+              o = -o
+            }
+            if(o > 0) {
+              lastHit = e.index
+            }
+          } else {
+            lastHit = e.index
+          }
+        } else if(e.y !== p[1]) {
+          lastHit = e.index
+        }
+      }
+    }
+  }
+  return lastHit
+}
+
+function IntervalSegment(y, index, start, closed) {
+  this.y = y
+  this.index = index
+  this.start = start
+  this.closed = closed
+}
+
+function Event(x, segment, create, index) {
+  this.x = x
+  this.segment = segment
+  this.create = create
+  this.index = index
+}
+
+
+function createSlabDecomposition(segments) {
+  var numSegments = segments.length
+  var numEvents = 2 * numSegments
+  var events = new Array(numEvents)
+  for(var i=0; i<numSegments; ++i) {
+    var s = segments[i]
+    var f = s[0][0] < s[1][0]
+    events[2*i] = new Event(s[0][0], s, f, i)
+    events[2*i+1] = new Event(s[1][0], s, !f, i)
+  }
+  events.sort(function(a,b) {
+    var d = a.x - b.x
+    if(d) {
+      return d
+    }
+    d = a.create - b.create
+    if(d) {
+      return d
+    }
+    return Math.min(a.segment[0][1], a.segment[1][1]) - Math.min(b.segment[0][1], b.segment[1][1])
+  })
+  var tree = createRBTree(orderSegments)
+  var slabs = []
+  var lines = []
+  var horizontal = []
+  var lastX = -Infinity
+  for(var i=0; i<numEvents; ) {
+    var x = events[i].x
+    var horiz = []
+    while(i < numEvents) {
+      var e = events[i]
+      if(e.x !== x) {
+        break
+      }
+      i += 1
+      if(e.segment[0][0] === e.x && e.segment[1][0] === e.x) {
+        if(e.create) {
+          if(e.segment[0][1] < e.segment[1][1]) {
+            horiz.push(new IntervalSegment(
+                e.segment[0][1],
+                e.index,
+                true,
+                true))
+            horiz.push(new IntervalSegment(
+                e.segment[1][1],
+                e.index,
+                false,
+                false))
+          } else {
+            horiz.push(new IntervalSegment(
+                e.segment[1][1],
+                e.index,
+                true,
+                false))
+            horiz.push(new IntervalSegment(
+                e.segment[0][1],
+                e.index,
+                false,
+                true))
+          }
+        }
+      } else {
+        if(e.create) {
+          tree = tree.insert(e.segment, e.index)
+        } else {
+          tree = tree.remove(e.segment)
+        }
+      }
+    }
+    slabs.push(tree.root)
+    lines.push(x)
+    horizontal.push(horiz)
+  }
+  return new SlabDecomposition(slabs, lines, horizontal)
+}
+},{"./lib/order-segments":21,"binary-search-bounds":22,"functional-red-black-tree":23,"robust-orientation":24}],22:[function(require,module,exports){
+"use strict"
+
+function compileSearch(funcName, predicate, reversed, extraArgs, useNdarray, earlyOut) {
+  var code = [
+    "function ", funcName, "(a,l,h,", extraArgs.join(","),  "){",
+earlyOut ? "" : "var i=", (reversed ? "l-1" : "h+1"),
+";while(l<=h){\
+var m=(l+h)>>>1,x=a", useNdarray ? ".get(m)" : "[m]"]
+  if(earlyOut) {
+    if(predicate.indexOf("c") < 0) {
+      code.push(";if(x===y){return m}else if(x<=y){")
+    } else {
+      code.push(";var p=c(x,y);if(p===0){return m}else if(p<=0){")
+    }
+  } else {
+    code.push(";if(", predicate, "){i=m;")
+  }
+  if(reversed) {
+    code.push("l=m+1}else{h=m-1}")
+  } else {
+    code.push("h=m-1}else{l=m+1}")
+  }
+  code.push("}")
+  if(earlyOut) {
+    code.push("return -1};")
+  } else {
+    code.push("return i};")
+  }
+  return code.join("")
+}
+
+function compileBoundsSearch(predicate, reversed, suffix, earlyOut) {
+  var result = new Function([
+  compileSearch("A", "x" + predicate + "y", reversed, ["y"], false, earlyOut),
+  compileSearch("B", "x" + predicate + "y", reversed, ["y"], true, earlyOut),
+  compileSearch("P", "c(x,y)" + predicate + "0", reversed, ["y", "c"], false, earlyOut),
+  compileSearch("Q", "c(x,y)" + predicate + "0", reversed, ["y", "c"], true, earlyOut),
+"function dispatchBsearch", suffix, "(a,y,c,l,h){\
+if(a.shape){\
+if(typeof(c)==='function'){\
+return Q(a,(l===undefined)?0:l|0,(h===undefined)?a.shape[0]-1:h|0,y,c)\
+}else{\
+return B(a,(c===undefined)?0:c|0,(l===undefined)?a.shape[0]-1:l|0,y)\
+}}else{\
+if(typeof(c)==='function'){\
+return P(a,(l===undefined)?0:l|0,(h===undefined)?a.length-1:h|0,y,c)\
+}else{\
+return A(a,(c===undefined)?0:c|0,(l===undefined)?a.length-1:l|0,y)\
+}}}\
+return dispatchBsearch", suffix].join(""))
+  return result()
+}
+
+module.exports = {
+  ge: compileBoundsSearch(">=", false, "GE"),
+  gt: compileBoundsSearch(">", false, "GT"),
+  lt: compileBoundsSearch("<", true, "LT"),
+  le: compileBoundsSearch("<=", true, "LE"),
+  eq: compileBoundsSearch("-", true, "EQ", true)
+}
+
+},{}],23:[function(require,module,exports){
+"use strict"
+
+module.exports = createRBTree
+
+var RED   = 0
+var BLACK = 1
+
+function RBNode(color, key, value, left, right, count) {
+  this._color = color
+  this.key = key
+  this.value = value
+  this.left = left
+  this.right = right
+  this._count = count
+}
+
+function cloneNode(node) {
+  return new RBNode(node._color, node.key, node.value, node.left, node.right, node._count)
+}
+
+function repaint(color, node) {
+  return new RBNode(color, node.key, node.value, node.left, node.right, node._count)
+}
+
+function recount(node) {
+  node._count = 1 + (node.left ? node.left._count : 0) + (node.right ? node.right._count : 0)
+}
+
+function RedBlackTree(compare, root) {
+  this._compare = compare
+  this.root = root
+}
+
+var proto = RedBlackTree.prototype
+
+Object.defineProperty(proto, "keys", {
+  get: function() {
+    var result = []
+    this.forEach(function(k,v) {
+      result.push(k)
+    })
+    return result
+  }
+})
+
+Object.defineProperty(proto, "values", {
+  get: function() {
+    var result = []
+    this.forEach(function(k,v) {
+      result.push(v)
+    })
+    return result
+  }
+})
+
+//Returns the number of nodes in the tree
+Object.defineProperty(proto, "length", {
+  get: function() {
+    if(this.root) {
+      return this.root._count
+    }
+    return 0
+  }
+})
+
+//Insert a new item into the tree
+proto.insert = function(key, value) {
+  var cmp = this._compare
+  //Find point to insert new node at
+  var n = this.root
+  var n_stack = []
+  var d_stack = []
+  while(n) {
+    var d = cmp(key, n.key)
+    n_stack.push(n)
+    d_stack.push(d)
+    if(d <= 0) {
+      n = n.left
+    } else {
+      n = n.right
+    }
+  }
+  //Rebuild path to leaf node
+  n_stack.push(new RBNode(RED, key, value, null, null, 1))
+  for(var s=n_stack.length-2; s>=0; --s) {
+    var n = n_stack[s]
+    if(d_stack[s] <= 0) {
+      n_stack[s] = new RBNode(n._color, n.key, n.value, n_stack[s+1], n.right, n._count+1)
+    } else {
+      n_stack[s] = new RBNode(n._color, n.key, n.value, n.left, n_stack[s+1], n._count+1)
+    }
+  }
+  //Rebalance tree using rotations
+  //console.log("start insert", key, d_stack)
+  for(var s=n_stack.length-1; s>1; --s) {
+    var p = n_stack[s-1]
+    var n = n_stack[s]
+    if(p._color === BLACK || n._color === BLACK) {
+      break
+    }
+    var pp = n_stack[s-2]
+    if(pp.left === p) {
+      if(p.left === n) {
+        var y = pp.right
+        if(y && y._color === RED) {
+          //console.log("LLr")
+          p._color = BLACK
+          pp.right = repaint(BLACK, y)
+          pp._color = RED
+          s -= 1
+        } else {
+          //console.log("LLb")
+          pp._color = RED
+          pp.left = p.right
+          p._color = BLACK
+          p.right = pp
+          n_stack[s-2] = p
+          n_stack[s-1] = n
+          recount(pp)
+          recount(p)
+          if(s >= 3) {
+            var ppp = n_stack[s-3]
+            if(ppp.left === pp) {
+              ppp.left = p
+            } else {
+              ppp.right = p
+            }
+          }
+          break
+        }
+      } else {
+        var y = pp.right
+        if(y && y._color === RED) {
+          //console.log("LRr")
+          p._color = BLACK
+          pp.right = repaint(BLACK, y)
+          pp._color = RED
+          s -= 1
+        } else {
+          //console.log("LRb")
+          p.right = n.left
+          pp._color = RED
+          pp.left = n.right
+          n._color = BLACK
+          n.left = p
+          n.right = pp
+          n_stack[s-2] = n
+          n_stack[s-1] = p
+          recount(pp)
+          recount(p)
+          recount(n)
+          if(s >= 3) {
+            var ppp = n_stack[s-3]
+            if(ppp.left === pp) {
+              ppp.left = n
+            } else {
+              ppp.right = n
+            }
+          }
+          break
+        }
+      }
+    } else {
+      if(p.right === n) {
+        var y = pp.left
+        if(y && y._color === RED) {
+          //console.log("RRr", y.key)
+          p._color = BLACK
+          pp.left = repaint(BLACK, y)
+          pp._color = RED
+          s -= 1
+        } else {
+          //console.log("RRb")
+          pp._color = RED
+          pp.right = p.left
+          p._color = BLACK
+          p.left = pp
+          n_stack[s-2] = p
+          n_stack[s-1] = n
+          recount(pp)
+          recount(p)
+          if(s >= 3) {
+            var ppp = n_stack[s-3]
+            if(ppp.right === pp) {
+              ppp.right = p
+            } else {
+              ppp.left = p
+            }
+          }
+          break
+        }
+      } else {
+        var y = pp.left
+        if(y && y._color === RED) {
+          //console.log("RLr")
+          p._color = BLACK
+          pp.left = repaint(BLACK, y)
+          pp._color = RED
+          s -= 1
+        } else {
+          //console.log("RLb")
+          p.left = n.right
+          pp._color = RED
+          pp.right = n.left
+          n._color = BLACK
+          n.right = p
+          n.left = pp
+          n_stack[s-2] = n
+          n_stack[s-1] = p
+          recount(pp)
+          recount(p)
+          recount(n)
+          if(s >= 3) {
+            var ppp = n_stack[s-3]
+            if(ppp.right === pp) {
+              ppp.right = n
+            } else {
+              ppp.left = n
+            }
+          }
+          break
+        }
+      }
+    }
+  }
+  //Return new tree
+  n_stack[0]._color = BLACK
+  return new RedBlackTree(cmp, n_stack[0])
+}
+
+
+//Visit all nodes inorder
+function doVisitFull(visit, node) {
+  if(node.left) {
+    var v = doVisitFull(visit, node.left)
+    if(v) { return v }
+  }
+  var v = visit(node.key, node.value)
+  if(v) { return v }
+  if(node.right) {
+    return doVisitFull(visit, node.right)
+  }
+}
+
+//Visit half nodes in order
+function doVisitHalf(lo, compare, visit, node) {
+  var l = compare(lo, node.key)
+  if(l <= 0) {
+    if(node.left) {
+      var v = doVisitHalf(lo, compare, visit, node.left)
+      if(v) { return v }
+    }
+    var v = visit(node.key, node.value)
+    if(v) { return v }
+  }
+  if(node.right) {
+    return doVisitHalf(lo, compare, visit, node.right)
+  }
+}
+
+//Visit all nodes within a range
+function doVisit(lo, hi, compare, visit, node) {
+  var l = compare(lo, node.key)
+  var h = compare(hi, node.key)
+  var v
+  if(l <= 0) {
+    if(node.left) {
+      v = doVisit(lo, hi, compare, visit, node.left)
+      if(v) { return v }
+    }
+    if(h > 0) {
+      v = visit(node.key, node.value)
+      if(v) { return v }
+    }
+  }
+  if(h > 0 && node.right) {
+    return doVisit(lo, hi, compare, visit, node.right)
+  }
+}
+
+
+proto.forEach = function rbTreeForEach(visit, lo, hi) {
+  if(!this.root) {
+    return
+  }
+  switch(arguments.length) {
+    case 1:
+      return doVisitFull(visit, this.root)
+    break
+
+    case 2:
+      return doVisitHalf(lo, this._compare, visit, this.root)
+    break
+
+    case 3:
+      if(this._compare(lo, hi) >= 0) {
+        return
+      }
+      return doVisit(lo, hi, this._compare, visit, this.root)
+    break
+  }
+}
+
+//First item in list
+Object.defineProperty(proto, "begin", {
+  get: function() {
+    var stack = []
+    var n = this.root
+    while(n) {
+      stack.push(n)
+      n = n.left
+    }
+    return new RedBlackTreeIterator(this, stack)
+  }
+})
+
+//Last item in list
+Object.defineProperty(proto, "end", {
+  get: function() {
+    var stack = []
+    var n = this.root
+    while(n) {
+      stack.push(n)
+      n = n.right
+    }
+    return new RedBlackTreeIterator(this, stack)
+  }
+})
+
+//Find the ith item in the tree
+proto.at = function(idx) {
+  if(idx < 0) {
+    return new RedBlackTreeIterator(this, [])
+  }
+  var n = this.root
+  var stack = []
+  while(true) {
+    stack.push(n)
+    if(n.left) {
+      if(idx < n.left._count) {
+        n = n.left
+        continue
+      }
+      idx -= n.left._count
+    }
+    if(!idx) {
+      return new RedBlackTreeIterator(this, stack)
+    }
+    idx -= 1
+    if(n.right) {
+      if(idx >= n.right._count) {
+        break
+      }
+      n = n.right
+    } else {
+      break
+    }
+  }
+  return new RedBlackTreeIterator(this, [])
+}
+
+proto.ge = function(key) {
+  var cmp = this._compare
+  var n = this.root
+  var stack = []
+  var last_ptr = 0
+  while(n) {
+    var d = cmp(key, n.key)
+    stack.push(n)
+    if(d <= 0) {
+      last_ptr = stack.length
+    }
+    if(d <= 0) {
+      n = n.left
+    } else {
+      n = n.right
+    }
+  }
+  stack.length = last_ptr
+  return new RedBlackTreeIterator(this, stack)
+}
+
+proto.gt = function(key) {
+  var cmp = this._compare
+  var n = this.root
+  var stack = []
+  var last_ptr = 0
+  while(n) {
+    var d = cmp(key, n.key)
+    stack.push(n)
+    if(d < 0) {
+      last_ptr = stack.length
+    }
+    if(d < 0) {
+      n = n.left
+    } else {
+      n = n.right
+    }
+  }
+  stack.length = last_ptr
+  return new RedBlackTreeIterator(this, stack)
+}
+
+proto.lt = function(key) {
+  var cmp = this._compare
+  var n = this.root
+  var stack = []
+  var last_ptr = 0
+  while(n) {
+    var d = cmp(key, n.key)
+    stack.push(n)
+    if(d > 0) {
+      last_ptr = stack.length
+    }
+    if(d <= 0) {
+      n = n.left
+    } else {
+      n = n.right
+    }
+  }
+  stack.length = last_ptr
+  return new RedBlackTreeIterator(this, stack)
+}
+
+proto.le = function(key) {
+  var cmp = this._compare
+  var n = this.root
+  var stack = []
+  var last_ptr = 0
+  while(n) {
+    var d = cmp(key, n.key)
+    stack.push(n)
+    if(d >= 0) {
+      last_ptr = stack.length
+    }
+    if(d < 0) {
+      n = n.left
+    } else {
+      n = n.right
+    }
+  }
+  stack.length = last_ptr
+  return new RedBlackTreeIterator(this, stack)
+}
+
+//Finds the item with key if it exists
+proto.find = function(key) {
+  var cmp = this._compare
+  var n = this.root
+  var stack = []
+  while(n) {
+    var d = cmp(key, n.key)
+    stack.push(n)
+    if(d === 0) {
+      return new RedBlackTreeIterator(this, stack)
+    }
+    if(d <= 0) {
+      n = n.left
+    } else {
+      n = n.right
+    }
+  }
+  return new RedBlackTreeIterator(this, [])
+}
+
+//Removes item with key from tree
+proto.remove = function(key) {
+  var iter = this.find(key)
+  if(iter) {
+    return iter.remove()
+  }
+  return this
+}
+
+//Returns the item at `key`
+proto.get = function(key) {
+  var cmp = this._compare
+  var n = this.root
+  var stack = []
+  while(n) {
+    var d = cmp(key, n.key)
+    stack.push(n)
+    if(d === 0) {
+      return n.value
+    }
+    if(d <= 0) {
+      n = n.left
+    } else {
+      n = n.right
+    }
+  }
+  return
+}
+
+//Iterator for red black tree
+function RedBlackTreeIterator(tree, stack) {
+  this.tree = tree
+  this._stack = stack
+}
+
+var iproto = RedBlackTreeIterator.prototype
+
+//Test if iterator is valid
+Object.defineProperty(iproto, "valid", {
+  get: function() {
+    return this._stack.length > 0
+  }
+})
+
+//Node of the iterator
+Object.defineProperty(iproto, "node", {
+  get: function() {
+    if(this._stack.length > 0) {
+      return this._stack[this._stack.length-1]
+    }
+    return null
+  },
+  enumerable: true
+})
+
+//Makes a copy of an iterator
+iproto.clone = function() {
+  return new RedBlackTreeIterator(this.tree, this._stack.slice())
+}
+
+//Swaps two nodes
+function swapNode(n, v) {
+  n.key = v.key
+  n.value = v.value
+  n.left = v.left
+  n.right = v.right
+  n._color = v._color
+  n._count = v._count
+}
+
+//Fix up a double black node in a tree
+function fixDoubleBlack(stack) {
+  var n, p, s, z
+  for(var i=stack.length-1; i>=0; --i) {
+    n = stack[i]
+    if(i === 0) {
+      n._color = BLACK
+      return
+    }
+    //console.log("visit node:", n.key, i, stack[i].key, stack[i-1].key)
+    p = stack[i-1]
+    if(p.left === n) {
+      //console.log("left child")
+      s = p.right
+      if(s.right && s.right._color === RED) {
+        //console.log("case 1: right sibling child red")
+        s = p.right = cloneNode(s)
+        z = s.right = cloneNode(s.right)
+        p.right = s.left
+        s.left = p
+        s.right = z
+        s._color = p._color
+        n._color = BLACK
+        p._color = BLACK
+        z._color = BLACK
+        recount(p)
+        recount(s)
+        if(i > 1) {
+          var pp = stack[i-2]
+          if(pp.left === p) {
+            pp.left = s
+          } else {
+            pp.right = s
+          }
+        }
+        stack[i-1] = s
+        return
+      } else if(s.left && s.left._color === RED) {
+        //console.log("case 1: left sibling child red")
+        s = p.right = cloneNode(s)
+        z = s.left = cloneNode(s.left)
+        p.right = z.left
+        s.left = z.right
+        z.left = p
+        z.right = s
+        z._color = p._color
+        p._color = BLACK
+        s._color = BLACK
+        n._color = BLACK
+        recount(p)
+        recount(s)
+        recount(z)
+        if(i > 1) {
+          var pp = stack[i-2]
+          if(pp.left === p) {
+            pp.left = z
+          } else {
+            pp.right = z
+          }
+        }
+        stack[i-1] = z
+        return
+      }
+      if(s._color === BLACK) {
+        if(p._color === RED) {
+          //console.log("case 2: black sibling, red parent", p.right.value)
+          p._color = BLACK
+          p.right = repaint(RED, s)
+          return
+        } else {
+          //console.log("case 2: black sibling, black parent", p.right.value)
+          p.right = repaint(RED, s)
+          continue  
+        }
+      } else {
+        //console.log("case 3: red sibling")
+        s = cloneNode(s)
+        p.right = s.left
+        s.left = p
+        s._color = p._color
+        p._color = RED
+        recount(p)
+        recount(s)
+        if(i > 1) {
+          var pp = stack[i-2]
+          if(pp.left === p) {
+            pp.left = s
+          } else {
+            pp.right = s
+          }
+        }
+        stack[i-1] = s
+        stack[i] = p
+        if(i+1 < stack.length) {
+          stack[i+1] = n
+        } else {
+          stack.push(n)
+        }
+        i = i+2
+      }
+    } else {
+      //console.log("right child")
+      s = p.left
+      if(s.left && s.left._color === RED) {
+        //console.log("case 1: left sibling child red", p.value, p._color)
+        s = p.left = cloneNode(s)
+        z = s.left = cloneNode(s.left)
+        p.left = s.right
+        s.right = p
+        s.left = z
+        s._color = p._color
+        n._color = BLACK
+        p._color = BLACK
+        z._color = BLACK
+        recount(p)
+        recount(s)
+        if(i > 1) {
+          var pp = stack[i-2]
+          if(pp.right === p) {
+            pp.right = s
+          } else {
+            pp.left = s
+          }
+        }
+        stack[i-1] = s
+        return
+      } else if(s.right && s.right._color === RED) {
+        //console.log("case 1: right sibling child red")
+        s = p.left = cloneNode(s)
+        z = s.right = cloneNode(s.right)
+        p.left = z.right
+        s.right = z.left
+        z.right = p
+        z.left = s
+        z._color = p._color
+        p._color = BLACK
+        s._color = BLACK
+        n._color = BLACK
+        recount(p)
+        recount(s)
+        recount(z)
+        if(i > 1) {
+          var pp = stack[i-2]
+          if(pp.right === p) {
+            pp.right = z
+          } else {
+            pp.left = z
+          }
+        }
+        stack[i-1] = z
+        return
+      }
+      if(s._color === BLACK) {
+        if(p._color === RED) {
+          //console.log("case 2: black sibling, red parent")
+          p._color = BLACK
+          p.left = repaint(RED, s)
+          return
+        } else {
+          //console.log("case 2: black sibling, black parent")
+          p.left = repaint(RED, s)
+          continue  
+        }
+      } else {
+        //console.log("case 3: red sibling")
+        s = cloneNode(s)
+        p.left = s.right
+        s.right = p
+        s._color = p._color
+        p._color = RED
+        recount(p)
+        recount(s)
+        if(i > 1) {
+          var pp = stack[i-2]
+          if(pp.right === p) {
+            pp.right = s
+          } else {
+            pp.left = s
+          }
+        }
+        stack[i-1] = s
+        stack[i] = p
+        if(i+1 < stack.length) {
+          stack[i+1] = n
+        } else {
+          stack.push(n)
+        }
+        i = i+2
+      }
+    }
+  }
+}
+
+//Removes item at iterator from tree
+iproto.remove = function() {
+  var stack = this._stack
+  if(stack.length === 0) {
+    return this.tree
+  }
+  //First copy path to node
+  var cstack = new Array(stack.length)
+  var n = stack[stack.length-1]
+  cstack[cstack.length-1] = new RBNode(n._color, n.key, n.value, n.left, n.right, n._count)
+  for(var i=stack.length-2; i>=0; --i) {
+    var n = stack[i]
+    if(n.left === stack[i+1]) {
+      cstack[i] = new RBNode(n._color, n.key, n.value, cstack[i+1], n.right, n._count)
+    } else {
+      cstack[i] = new RBNode(n._color, n.key, n.value, n.left, cstack[i+1], n._count)
+    }
+  }
+
+  //Get node
+  n = cstack[cstack.length-1]
+  //console.log("start remove: ", n.value)
+
+  //If not leaf, then swap with previous node
+  if(n.left && n.right) {
+    //console.log("moving to leaf")
+
+    //First walk to previous leaf
+    var split = cstack.length
+    n = n.left
+    while(n.right) {
+      cstack.push(n)
+      n = n.right
+    }
+    //Copy path to leaf
+    var v = cstack[split-1]
+    cstack.push(new RBNode(n._color, v.key, v.value, n.left, n.right, n._count))
+    cstack[split-1].key = n.key
+    cstack[split-1].value = n.value
+
+    //Fix up stack
+    for(var i=cstack.length-2; i>=split; --i) {
+      n = cstack[i]
+      cstack[i] = new RBNode(n._color, n.key, n.value, n.left, cstack[i+1], n._count)
+    }
+    cstack[split-1].left = cstack[split]
+  }
+  //console.log("stack=", cstack.map(function(v) { return v.value }))
+
+  //Remove leaf node
+  n = cstack[cstack.length-1]
+  if(n._color === RED) {
+    //Easy case: removing red leaf
+    //console.log("RED leaf")
+    var p = cstack[cstack.length-2]
+    if(p.left === n) {
+      p.left = null
+    } else if(p.right === n) {
+      p.right = null
+    }
+    cstack.pop()
+    for(var i=0; i<cstack.length; ++i) {
+      cstack[i]._count--
+    }
+    return new RedBlackTree(this.tree._compare, cstack[0])
+  } else {
+    if(n.left || n.right) {
+      //Second easy case:  Single child black parent
+      //console.log("BLACK single child")
+      if(n.left) {
+        swapNode(n, n.left)
+      } else if(n.right) {
+        swapNode(n, n.right)
+      }
+      //Child must be red, so repaint it black to balance color
+      n._color = BLACK
+      for(var i=0; i<cstack.length-1; ++i) {
+        cstack[i]._count--
+      }
+      return new RedBlackTree(this.tree._compare, cstack[0])
+    } else if(cstack.length === 1) {
+      //Third easy case: root
+      //console.log("ROOT")
+      return new RedBlackTree(this.tree._compare, null)
+    } else {
+      //Hard case: Repaint n, and then do some nasty stuff
+      //console.log("BLACK leaf no children")
+      for(var i=0; i<cstack.length; ++i) {
+        cstack[i]._count--
+      }
+      var parent = cstack[cstack.length-2]
+      fixDoubleBlack(cstack)
+      //Fix up links
+      if(parent.left === n) {
+        parent.left = null
+      } else {
+        parent.right = null
+      }
+    }
+  }
+  return new RedBlackTree(this.tree._compare, cstack[0])
+}
+
+//Returns key
+Object.defineProperty(iproto, "key", {
+  get: function() {
+    if(this._stack.length > 0) {
+      return this._stack[this._stack.length-1].key
+    }
+    return
+  },
+  enumerable: true
+})
+
+//Returns value
+Object.defineProperty(iproto, "value", {
+  get: function() {
+    if(this._stack.length > 0) {
+      return this._stack[this._stack.length-1].value
+    }
+    return
+  },
+  enumerable: true
+})
+
+
+//Returns the position of this iterator in the sorted list
+Object.defineProperty(iproto, "index", {
+  get: function() {
+    var idx = 0
+    var stack = this._stack
+    if(stack.length === 0) {
+      var r = this.tree.root
+      if(r) {
+        return r._count
+      }
+      return 0
+    } else if(stack[stack.length-1].left) {
+      idx = stack[stack.length-1].left._count
+    }
+    for(var s=stack.length-2; s>=0; --s) {
+      if(stack[s+1] === stack[s].right) {
+        ++idx
+        if(stack[s].left) {
+          idx += stack[s].left._count
+        }
+      }
+    }
+    return idx
+  },
+  enumerable: true
+})
+
+//Advances iterator to next element in list
+iproto.next = function() {
+  var stack = this._stack
+  if(stack.length === 0) {
+    return
+  }
+  var n = stack[stack.length-1]
+  if(n.right) {
+    n = n.right
+    while(n) {
+      stack.push(n)
+      n = n.left
+    }
+  } else {
+    stack.pop()
+    while(stack.length > 0 && stack[stack.length-1].right === n) {
+      n = stack[stack.length-1]
+      stack.pop()
+    }
+  }
+}
+
+//Checks if iterator is at end of tree
+Object.defineProperty(iproto, "hasNext", {
+  get: function() {
+    var stack = this._stack
+    if(stack.length === 0) {
+      return false
+    }
+    if(stack[stack.length-1].right) {
+      return true
+    }
+    for(var s=stack.length-1; s>0; --s) {
+      if(stack[s-1].left === stack[s]) {
+        return true
+      }
+    }
+    return false
+  }
+})
+
+//Update value
+iproto.update = function(value) {
+  var stack = this._stack
+  if(stack.length === 0) {
+    throw new Error("Can't update empty node!")
+  }
+  var cstack = new Array(stack.length)
+  var n = stack[stack.length-1]
+  cstack[cstack.length-1] = new RBNode(n._color, n.key, value, n.left, n.right, n._count)
+  for(var i=stack.length-2; i>=0; --i) {
+    n = stack[i]
+    if(n.left === stack[i+1]) {
+      cstack[i] = new RBNode(n._color, n.key, n.value, cstack[i+1], n.right, n._count)
+    } else {
+      cstack[i] = new RBNode(n._color, n.key, n.value, n.left, cstack[i+1], n._count)
+    }
+  }
+  return new RedBlackTree(this.tree._compare, cstack[0])
+}
+
+//Moves iterator backward one element
+iproto.prev = function() {
+  var stack = this._stack
+  if(stack.length === 0) {
+    return
+  }
+  var n = stack[stack.length-1]
+  if(n.left) {
+    n = n.left
+    while(n) {
+      stack.push(n)
+      n = n.right
+    }
+  } else {
+    stack.pop()
+    while(stack.length > 0 && stack[stack.length-1].left === n) {
+      n = stack[stack.length-1]
+      stack.pop()
+    }
+  }
+}
+
+//Checks if iterator is at start of tree
+Object.defineProperty(iproto, "hasPrev", {
+  get: function() {
+    var stack = this._stack
+    if(stack.length === 0) {
+      return false
+    }
+    if(stack[stack.length-1].left) {
+      return true
+    }
+    for(var s=stack.length-1; s>0; --s) {
+      if(stack[s-1].right === stack[s]) {
+        return true
+      }
+    }
+    return false
+  }
+})
+
+//Default comparison function
+function defaultCompare(a, b) {
+  if(a < b) {
+    return -1
+  }
+  if(a > b) {
+    return 1
+  }
+  return 0
+}
+
+//Build a tree
+function createRBTree(compare) {
+  return new RedBlackTree(compare || defaultCompare, null)
+}
+},{}],20:[function(require,module,exports){
+"use strict"; "use restrict";
+
+var bits      = require("bit-twiddle")
+  , UnionFind = require("union-find")
+
+//Returns the dimension of a cell complex
+function dimension(cells) {
+  var d = 0
+    , max = Math.max
+  for(var i=0, il=cells.length; i<il; ++i) {
+    d = max(d, cells[i].length)
+  }
+  return d-1
+}
+exports.dimension = dimension
+
+//Counts the number of vertices in faces
+function countVertices(cells) {
+  var vc = -1
+    , max = Math.max
+  for(var i=0, il=cells.length; i<il; ++i) {
+    var c = cells[i]
+    for(var j=0, jl=c.length; j<jl; ++j) {
+      vc = max(vc, c[j])
+    }
+  }
+  return vc+1
+}
+exports.countVertices = countVertices
+
+//Returns a deep copy of cells
+function cloneCells(cells) {
+  var ncells = new Array(cells.length)
+  for(var i=0, il=cells.length; i<il; ++i) {
+    ncells[i] = cells[i].slice(0)
+  }
+  return ncells
+}
+exports.cloneCells = cloneCells
+
+//Ranks a pair of cells up to permutation
+function compareCells(a, b) {
+  var n = a.length
+    , t = a.length - b.length
+    , min = Math.min
+  if(t) {
+    return t
+  }
+  switch(n) {
+    case 0:
+      return 0;
+    case 1:
+      return a[0] - b[0];
+    case 2:
+      var d = a[0]+a[1]-b[0]-b[1]
+      if(d) {
+        return d
+      }
+      return min(a[0],a[1]) - min(b[0],b[1])
+    case 3:
+      var l1 = a[0]+a[1]
+        , m1 = b[0]+b[1]
+      d = l1+a[2] - (m1+b[2])
+      if(d) {
+        return d
+      }
+      var l0 = min(a[0], a[1])
+        , m0 = min(b[0], b[1])
+        , d  = min(l0, a[2]) - min(m0, b[2])
+      if(d) {
+        return d
+      }
+      return min(l0+a[2], l1) - min(m0+b[2], m1)
+    
+    //TODO: Maybe optimize n=4 as well?
+    
+    default:
+      var as = a.slice(0)
+      as.sort()
+      var bs = b.slice(0)
+      bs.sort()
+      for(var i=0; i<n; ++i) {
+        t = as[i] - bs[i]
+        if(t) {
+          return t
+        }
+      }
+      return 0
+  }
+}
+exports.compareCells = compareCells
+
+function compareZipped(a, b) {
+  return compareCells(a[0], b[0])
+}
+
+//Puts a cell complex into normal order for the purposes of findCell queries
+function normalize(cells, attr) {
+  if(attr) {
+    var len = cells.length
+    var zipped = new Array(len)
+    for(var i=0; i<len; ++i) {
+      zipped[i] = [cells[i], attr[i]]
+    }
+    zipped.sort(compareZipped)
+    for(var i=0; i<len; ++i) {
+      cells[i] = zipped[i][0]
+      attr[i] = zipped[i][1]
+    }
+    return cells
+  } else {
+    cells.sort(compareCells)
+    return cells
+  }
+}
+exports.normalize = normalize
+
+//Removes all duplicate cells in the complex
+function unique(cells) {
+  if(cells.length === 0) {
+    return []
+  }
+  var ptr = 1
+    , len = cells.length
+  for(var i=1; i<len; ++i) {
+    var a = cells[i]
+    if(compareCells(a, cells[i-1])) {
+      if(i === ptr) {
+        ptr++
+        continue
+      }
+      cells[ptr++] = a
+    }
+  }
+  cells.length = ptr
+  return cells
+}
+exports.unique = unique;
+
+//Finds a cell in a normalized cell complex
+function findCell(cells, c) {
+  var lo = 0
+    , hi = cells.length-1
+    , r  = -1
+  while (lo <= hi) {
+    var mid = (lo + hi) >> 1
+      , s   = compareCells(cells[mid], c)
+    if(s <= 0) {
+      if(s === 0) {
+        r = mid
+      }
+      lo = mid + 1
+    } else if(s > 0) {
+      hi = mid - 1
+    }
+  }
+  return r
+}
+exports.findCell = findCell;
+
+//Builds an index for an n-cell.  This is more general than dual, but less efficient
+function incidence(from_cells, to_cells) {
+  var index = new Array(from_cells.length)
+  for(var i=0, il=index.length; i<il; ++i) {
+    index[i] = []
+  }
+  var b = []
+  for(var i=0, n=to_cells.length; i<n; ++i) {
+    var c = to_cells[i]
+    var cl = c.length
+    for(var k=1, kn=(1<<cl); k<kn; ++k) {
+      b.length = bits.popCount(k)
+      var l = 0
+      for(var j=0; j<cl; ++j) {
+        if(k & (1<<j)) {
+          b[l++] = c[j]
+        }
+      }
+      var idx=findCell(from_cells, b)
+      if(idx < 0) {
+        continue
+      }
+      while(true) {
+        index[idx++].push(i)
+        if(idx >= from_cells.length || compareCells(from_cells[idx], b) !== 0) {
+          break
+        }
+      }
+    }
+  }
+  return index
+}
+exports.incidence = incidence
+
+//Computes the dual of the mesh.  This is basically an optimized version of buildIndex for the situation where from_cells is just the list of vertices
+function dual(cells, vertex_count) {
+  if(!vertex_count) {
+    return incidence(unique(skeleton(cells, 0)), cells, 0)
+  }
+  var res = new Array(vertex_count)
+  for(var i=0; i<vertex_count; ++i) {
+    res[i] = []
+  }
+  for(var i=0, len=cells.length; i<len; ++i) {
+    var c = cells[i]
+    for(var j=0, cl=c.length; j<cl; ++j) {
+      res[c[j]].push(i)
+    }
+  }
+  return res
+}
+exports.dual = dual
+
+//Enumerates all cells in the complex
+function explode(cells) {
+  var result = []
+  for(var i=0, il=cells.length; i<il; ++i) {
+    var c = cells[i]
+      , cl = c.length|0
+    for(var j=1, jl=(1<<cl); j<jl; ++j) {
+      var b = []
+      for(var k=0; k<cl; ++k) {
+        if((j >>> k) & 1) {
+          b.push(c[k])
+        }
+      }
+      result.push(b)
+    }
+  }
+  return normalize(result)
+}
+exports.explode = explode
+
+//Enumerates all of the n-cells of a cell complex
+function skeleton(cells, n) {
+  if(n < 0) {
+    return []
+  }
+  var result = []
+    , k0     = (1<<(n+1))-1
+  for(var i=0; i<cells.length; ++i) {
+    var c = cells[i]
+    for(var k=k0; k<(1<<c.length); k=bits.nextCombination(k)) {
+      var b = new Array(n+1)
+        , l = 0
+      for(var j=0; j<c.length; ++j) {
+        if(k & (1<<j)) {
+          b[l++] = c[j]
+        }
+      }
+      result.push(b)
+    }
+  }
+  return normalize(result)
+}
+exports.skeleton = skeleton;
+
+//Computes the boundary of all cells, does not remove duplicates
+function boundary(cells) {
+  var res = []
+  for(var i=0,il=cells.length; i<il; ++i) {
+    var c = cells[i]
+    for(var j=0,cl=c.length; j<cl; ++j) {
+      var b = new Array(c.length-1)
+      for(var k=0, l=0; k<cl; ++k) {
+        if(k !== j) {
+          b[l++] = c[k]
+        }
+      }
+      res.push(b)
+    }
+  }
+  return normalize(res)
+}
+exports.boundary = boundary;
+
+//Computes connected components for a dense cell complex
+function connectedComponents_dense(cells, vertex_count) {
+  var labels = new UnionFind(vertex_count)
+  for(var i=0; i<cells.length; ++i) {
+    var c = cells[i]
+    for(var j=0; j<c.length; ++j) {
+      for(var k=j+1; k<c.length; ++k) {
+        labels.link(c[j], c[k])
+      }
+    }
+  }
+  var components = []
+    , component_labels = labels.ranks
+  for(var i=0; i<component_labels.length; ++i) {
+    component_labels[i] = -1
+  }
+  for(var i=0; i<cells.length; ++i) {
+    var l = labels.find(cells[i][0])
+    if(component_labels[l] < 0) {
+      component_labels[l] = components.length
+      components.push([cells[i].slice(0)])
+    } else {
+      components[component_labels[l]].push(cells[i].slice(0))
+    }
+  }
+  return components
+}
+
+//Computes connected components for a sparse graph
+function connectedComponents_sparse(cells) {
+  var vertices  = unique(normalize(skeleton(cells, 0)))
+    , labels    = new UnionFind(vertices.length)
+  for(var i=0; i<cells.length; ++i) {
+    var c = cells[i]
+    for(var j=0; j<c.length; ++j) {
+      var vj = findCell(vertices, [c[j]])
+      for(var k=j+1; k<c.length; ++k) {
+        labels.link(vj, findCell(vertices, [c[k]]))
+      }
+    }
+  }
+  var components        = []
+    , component_labels  = labels.ranks
+  for(var i=0; i<component_labels.length; ++i) {
+    component_labels[i] = -1
+  }
+  for(var i=0; i<cells.length; ++i) {
+    var l = labels.find(findCell(vertices, [cells[i][0]]));
+    if(component_labels[l] < 0) {
+      component_labels[l] = components.length
+      components.push([cells[i].slice(0)])
+    } else {
+      components[component_labels[l]].push(cells[i].slice(0))
+    }
+  }
+  return components
+}
+
+//Computes connected components for a cell complex
+function connectedComponents(cells, vertex_count) {
+  if(vertex_count) {
+    return connectedComponents_dense(cells, vertex_count)
+  }
+  return connectedComponents_sparse(cells)
+}
+exports.connectedComponents = connectedComponents
+
+},{"bit-twiddle":25,"union-find":26}],27:[function(require,module,exports){
+"use strict"
+
+function iota(n) {
+  var result = new Array(n)
+  for(var i=0; i<n; ++i) {
+    result[i] = i
+  }
+  return result
+}
+
+module.exports = iota
+},{}],28:[function(require,module,exports){
+var exports = module.exports = function (xs) {
+    if (typeof xs !== 'object') { // of which Arrays are
+        throw new TypeError('Must be an Array or an object');
+    }
+    
+    return Object.keys(exports).reduce(function (acc, name) {
+        acc[name] = exports[name].bind(null, xs);
+        return acc;
+    }, {});
+};
+
+exports.shuffle = function (xs) {
+    if (Array.isArray(xs)) {
+        // uniform shuffle
+        var res = xs.slice();
+        for (var i = res.length - 1; i >= 0; i--) {
+            var n = Math.floor(Math.random() * i);
+            var t = res[i];
+            res[i] = res[n];
+            res[n] = t;
+        }
+        return res;
+    }
+    else if (typeof xs === 'object') {
+        // weighted shuffle
+        var weights = Object.keys(xs).reduce(function (acc, key) {
+            acc[key] = xs[key];
+            return acc;
+        }, {});
+        
+        var ret = [];
+        
+        while (Object.keys(weights).length > 0) {
+            var key = exports.pick(weights);
+            delete weights[key];
+            ret.push(key);
+        }
+        
+        return ret;
+    }
+    else {
+        throw new TypeError('Must be an Array or an object');
+    }
+};
+
+exports.pick = function (xs) {
+    if (Array.isArray(xs)) {
+        // uniform sample
+        return xs[Math.floor(Math.random() * xs.length)];
+    }
+    else if (typeof xs === 'object') {
+        // weighted sample
+        var weights = exports.normalize(xs);
+        if (!weights) return undefined;
+        
+        var n = Math.random();
+        var threshold = 0;
+        var keys = Object.keys(weights);
+        
+        for (var i = 0; i < keys.length; i++) {
+            threshold += weights[keys[i]];
+            if (n < threshold) return keys[i];
+        }
+        throw new Error('Exceeded threshold. Something is very wrong.');
+    }
+    else {
+        throw new TypeError('Must be an Array or an object');
+    }
+};
+
+exports.normalize = function (weights) {
+    if (typeof weights !== 'object' || Array.isArray(weights)) {
+        throw 'Not an object'
+    }
+    
+    var keys = Object.keys(weights);
+    if (keys.length === 0) return undefined;
+    
+    var total = keys.reduce(function (sum, key) {
+        var x = weights[key];
+        if (x < 0) {
+            throw new Error('Negative weight encountered at key ' + key);
+        }
+        else if (typeof x !== 'number') {
+            throw new TypeError('Number expected, got ' + typeof x);
+        }
+        else {
+            return sum + x;
+        }
+    }, 0);
+    
+    return total === 1
+        ? weights
+        : keys.reduce(function (acc, key) {
+            acc[key] = weights[key] / total;
+            return acc;
+        }, {})
+    ;
+};
+
+},{}],25:[function(require,module,exports){
+/**
+ * Bit twiddling hacks for JavaScript.
+ *
+ * Author: Mikola Lysenko
+ *
+ * Ported from Stanford bit twiddling hack library:
+ *    http://graphics.stanford.edu/~seander/bithacks.html
+ */
+
+"use strict"; "use restrict";
+
+//Number of bits in an integer
+var INT_BITS = 32;
+
+//Constants
+exports.INT_BITS  = INT_BITS;
+exports.INT_MAX   =  0x7fffffff;
+exports.INT_MIN   = -1<<(INT_BITS-1);
+
+//Returns -1, 0, +1 depending on sign of x
+exports.sign = function(v) {
+  return (v > 0) - (v < 0);
+}
+
+//Computes absolute value of integer
+exports.abs = function(v) {
+  var mask = v >> (INT_BITS-1);
+  return (v ^ mask) - mask;
+}
+
+//Computes minimum of integers x and y
+exports.min = function(x, y) {
+  return y ^ ((x ^ y) & -(x < y));
+}
+
+//Computes maximum of integers x and y
+exports.max = function(x, y) {
+  return x ^ ((x ^ y) & -(x < y));
+}
+
+//Checks if a number is a power of two
+exports.isPow2 = function(v) {
+  return !(v & (v-1)) && (!!v);
+}
+
+//Computes log base 2 of v
+exports.log2 = function(v) {
+  var r, shift;
+  r =     (v > 0xFFFF) << 4; v >>>= r;
+  shift = (v > 0xFF  ) << 3; v >>>= shift; r |= shift;
+  shift = (v > 0xF   ) << 2; v >>>= shift; r |= shift;
+  shift = (v > 0x3   ) << 1; v >>>= shift; r |= shift;
+  return r | (v >> 1);
+}
+
+//Computes log base 10 of v
+exports.log10 = function(v) {
+  return  (v >= 1000000000) ? 9 : (v >= 100000000) ? 8 : (v >= 10000000) ? 7 :
+          (v >= 1000000) ? 6 : (v >= 100000) ? 5 : (v >= 10000) ? 4 :
+          (v >= 1000) ? 3 : (v >= 100) ? 2 : (v >= 10) ? 1 : 0;
+}
+
+//Counts number of bits
+exports.popCount = function(v) {
+  v = v - ((v >>> 1) & 0x55555555);
+  v = (v & 0x33333333) + ((v >>> 2) & 0x33333333);
+  return ((v + (v >>> 4) & 0xF0F0F0F) * 0x1010101) >>> 24;
+}
+
+//Counts number of trailing zeros
+function countTrailingZeros(v) {
+  var c = 32;
+  v &= -v;
+  if (v) c--;
+  if (v & 0x0000FFFF) c -= 16;
+  if (v & 0x00FF00FF) c -= 8;
+  if (v & 0x0F0F0F0F) c -= 4;
+  if (v & 0x33333333) c -= 2;
+  if (v & 0x55555555) c -= 1;
+  return c;
+}
+exports.countTrailingZeros = countTrailingZeros;
+
+//Rounds to next power of 2
+exports.nextPow2 = function(v) {
+  v += v === 0;
+  --v;
+  v |= v >>> 1;
+  v |= v >>> 2;
+  v |= v >>> 4;
+  v |= v >>> 8;
+  v |= v >>> 16;
+  return v + 1;
+}
+
+//Rounds down to previous power of 2
+exports.prevPow2 = function(v) {
+  v |= v >>> 1;
+  v |= v >>> 2;
+  v |= v >>> 4;
+  v |= v >>> 8;
+  v |= v >>> 16;
+  return v - (v>>>1);
+}
+
+//Computes parity of word
+exports.parity = function(v) {
+  v ^= v >>> 16;
+  v ^= v >>> 8;
+  v ^= v >>> 4;
+  v &= 0xf;
+  return (0x6996 >>> v) & 1;
+}
+
+var REVERSE_TABLE = new Array(256);
+
+(function(tab) {
+  for(var i=0; i<256; ++i) {
+    var v = i, r = i, s = 7;
+    for (v >>>= 1; v; v >>>= 1) {
+      r <<= 1;
+      r |= v & 1;
+      --s;
+    }
+    tab[i] = (r << s) & 0xff;
+  }
+})(REVERSE_TABLE);
+
+//Reverse bits in a 32 bit word
+exports.reverse = function(v) {
+  return  (REVERSE_TABLE[ v         & 0xff] << 24) |
+          (REVERSE_TABLE[(v >>> 8)  & 0xff] << 16) |
+          (REVERSE_TABLE[(v >>> 16) & 0xff] << 8)  |
+           REVERSE_TABLE[(v >>> 24) & 0xff];
+}
+
+//Interleave bits of 2 coordinates with 16 bits.  Useful for fast quadtree codes
+exports.interleave2 = function(x, y) {
+  x &= 0xFFFF;
+  x = (x | (x << 8)) & 0x00FF00FF;
+  x = (x | (x << 4)) & 0x0F0F0F0F;
+  x = (x | (x << 2)) & 0x33333333;
+  x = (x | (x << 1)) & 0x55555555;
+
+  y &= 0xFFFF;
+  y = (y | (y << 8)) & 0x00FF00FF;
+  y = (y | (y << 4)) & 0x0F0F0F0F;
+  y = (y | (y << 2)) & 0x33333333;
+  y = (y | (y << 1)) & 0x55555555;
+
+  return x | (y << 1);
+}
+
+//Extracts the nth interleaved component
+exports.deinterleave2 = function(v, n) {
+  v = (v >>> n) & 0x55555555;
+  v = (v | (v >>> 1))  & 0x33333333;
+  v = (v | (v >>> 2))  & 0x0F0F0F0F;
+  v = (v | (v >>> 4))  & 0x00FF00FF;
+  v = (v | (v >>> 16)) & 0x000FFFF;
+  return (v << 16) >> 16;
+}
+
+
+//Interleave bits of 3 coordinates, each with 10 bits.  Useful for fast octree codes
+exports.interleave3 = function(x, y, z) {
+  x &= 0x3FF;
+  x  = (x | (x<<16)) & 4278190335;
+  x  = (x | (x<<8))  & 251719695;
+  x  = (x | (x<<4))  & 3272356035;
+  x  = (x | (x<<2))  & 1227133513;
+
+  y &= 0x3FF;
+  y  = (y | (y<<16)) & 4278190335;
+  y  = (y | (y<<8))  & 251719695;
+  y  = (y | (y<<4))  & 3272356035;
+  y  = (y | (y<<2))  & 1227133513;
+  x |= (y << 1);
+  
+  z &= 0x3FF;
+  z  = (z | (z<<16)) & 4278190335;
+  z  = (z | (z<<8))  & 251719695;
+  z  = (z | (z<<4))  & 3272356035;
+  z  = (z | (z<<2))  & 1227133513;
+  
+  return x | (z << 2);
+}
+
+//Extracts nth interleaved component of a 3-tuple
+exports.deinterleave3 = function(v, n) {
+  v = (v >>> n)       & 1227133513;
+  v = (v | (v>>>2))   & 3272356035;
+  v = (v | (v>>>4))   & 251719695;
+  v = (v | (v>>>8))   & 4278190335;
+  v = (v | (v>>>16))  & 0x3FF;
+  return (v<<22)>>22;
+}
+
+//Computes next combination in colexicographic order (this is mistakenly called nextPermutation on the bit twiddling hacks page)
+exports.nextCombination = function(v) {
+  var t = v | (v - 1);
+  return (t + 1) | (((~t & -~t) - 1) >>> (countTrailingZeros(v) + 1));
+}
+
+
+},{}],26:[function(require,module,exports){
+"use strict"; "use restrict";
+
+module.exports = UnionFind;
+
+function UnionFind(count) {
+  this.roots = new Array(count);
+  this.ranks = new Array(count);
+  
+  for(var i=0; i<count; ++i) {
+    this.roots[i] = i;
+    this.ranks[i] = 0;
+  }
+}
+
+UnionFind.prototype.length = function() {
+  return this.roots.length;
+}
+
+UnionFind.prototype.makeSet = function() {
+  var n = this.roots.length;
+  this.roots.push(n);
+  this.ranks.push(0);
+  return n;
+}
+
+UnionFind.prototype.find = function(x) {
+  var roots = this.roots;
+  while(roots[x] !== x) {
+    var y = roots[x];
+    roots[x] = roots[y];
+    x = y;
+  }
+  return x;
+}
+
+UnionFind.prototype.link = function(x, y) {
+  var xr = this.find(x)
+    , yr = this.find(y);
+  if(xr === yr) {
+    return;
+  }
+  var ranks = this.ranks
+    , roots = this.roots
+    , xd    = ranks[xr]
+    , yd    = ranks[yr];
+  if(xd < yd) {
+    roots[xr] = yr;
+  } else if(yd < xd) {
+    roots[yr] = xr;
+  } else {
+    roots[yr] = xr;
+    ++ranks[xr];
+  }
+}
+
+
+},{}],19:[function(require,module,exports){
+"use strict"
+
+var iota = require("iota-array")
+var deck = require("deck")
+var orientation = require("robust-orientation")
+var pointInSimplex = require("robust-point-in-simplex")
+var inSphere = require("robust-in-sphere")
+var sc = require("simplicial-complex")
+
+module.exports = createDelaunayTriangulation
+
+function Simplex(triangulation, vertices, children, next, prev) {
+  this.triangulation = triangulation
+  this.vertices = vertices
+  this.children = children
+  this.next = next
+  this.prev = prev
+}
+
+var proto = Simplex.prototype
+
+proto.insert = function(p) {
+  if(this.children) {
+    for(var i=0; i<this.children.length; ++i) {
+      if(this.children[i].contains(this.triangulation.points[p])) {
+        this.children[i].insert(p)
+      }
+    }
+  } else {
+    //Unlink from list
+    this.prev.next = this.next
+    this.next.prev = this.prev
+    this.next = this.prev = null
+    //Add child
+    this.children = []
+    for(var i=this.vertices.length-1; i>=0; --i) {
+      //Remove from dual
+      var v = this.vertices[i]
+      var d = this.triangulation._dual[v]
+      for(var j=d.length-1; j>=0; --j) {
+        if(d[j] === this) {
+          d[j] = d[d.length-1]
+          d.pop()
+          break
+        }
+      }
+      //Add child
+      var nv = this.vertices.slice()
+      nv[i] = p
+      var child = new Simplex(this.triangulation, nv, null, this.triangulation.next, this.triangulation)
+      if(!child.degenerate()) {
+        this.children.push(child)
+        this.triangulation.next.prev = child
+        this.triangulation.next = child
+        for(var j=0; j<nv.length; ++j) {
+          this.triangulation._dual[nv[j]].push(child)
+        }
+      }
+    }
+  }
+}
+
+proto.contains = function(p) {
+  var pointList = new Array(this.vertices.length)
+  for(var i=0; i<this.vertices.length; ++i) {
+    pointList[i] = this.triangulation.points[this.vertices[i]]
+  }
+  return pointInSimplex(pointList, p) >= 0
+}
+
+proto.degenerate = function() {
+  var pointList = new Array(this.vertices.length)
+  for(var i=0; i<this.vertices.length; ++i) {
+    pointList[i] = this.triangulation.points[this.vertices[i]]
+  }
+  return orientation(pointList) === 0
+}
+
+function DelaunayTriangulation(points, dual, root) {
+  this.points = points
+  this._dual = dual
+  this._root = root
+  this.next = this
+  this.prev = this
+}
+
+var dproto = DelaunayTriangulation.prototype
+
+
+dproto.dual = function(v) {
+  var d = this._dual[v]
+  var r = []
+  for(var i=0; i<d.length; ++i) {
+    r.push(d[i].vertices)
+  }
+  return r
+}
+
+function removeFromDual(triangulation, simplex) {
+  for(var i=0; i<simplex.vertices.length; ++i) {
+    var d = triangulation._dual[simplex.vertices[i]]
+    for(var j=0; j<d.length; ++j) {
+      if(d[j] === simplex) {
+        d[j] = d[d.length-1]
+        d.pop()
+        break
+      }
+    }
+  }
+}
+
+dproto.insert = function(p) {
+  var v = this.points.length
+  this.points.push(p)
+  this._dual.push([])
+  this._root.insert(v)
+  //Fix up delaunay condition
+  var to_visit = this._dual[v].slice()
+  while(to_visit.length > 0) {
+    var c = to_visit[to_visit.length-1]
+    to_visit.pop()
+    if(c.children) {
+      continue
+    }
+    //Get opposite simplex
+    var points = new Array(c.vertices.length+1)
+    var v_sum = 0
+    for(var i=0; i<c.vertices.length; ++i) {
+      points[i] = this.points[c.vertices[i]]
+      v_sum ^= c.vertices[i]
+    }
+    //Walk over simplex vertices
+do_flip:
+    for(var i=0; i<c.vertices.length; ++i) {
+      //Find opposite simplex to vertex i
+      if(c.vertices[i] !== v) {
+        continue
+      }
+      var d = this._dual[c.vertices[(i+1)%c.vertices.length]]
+      var opposite
+      var opposite_index
+search_opposite:
+      for(var j=0; j<d.length; ++j) {
+        opposite = d[j]
+        if(opposite === c) {
+          continue
+        }
+        opposite_index = v_sum ^ v
+        for(var k=0; k<opposite.vertices.length; ++k) {
+          opposite_index ^= opposite.vertices[k]
+          if(c.vertices[k] !== v && opposite.vertices.indexOf(c.vertices[k]) < 0) {
+            continue search_opposite
+          }
+        }
+        //Check if legal
+        points[c.vertices.length] = this.points[opposite_index]
+        var s = inSphere(points)
+        if(inSphere(points) > 0) {
+          //Unlink cells
+          removeFromDual(this, c)
+          c.children = []
+          c.next.prev = c.prev
+          c.prev.next = c.next
+          c.next = c.prev = null
+          removeFromDual(this, opposite)
+          opposite.children = []
+          opposite.next.prev = opposite.prev
+          opposite.prev.next = opposite.next
+          opposite.next = opposite.prev = null
+          for(var k=0; k<c.vertices.length; ++k) {
+            if(c.vertices[k] === v) {
+              continue
+            }
+            var nv = c.vertices.slice()
+            nv[k] = opposite_index
+            //Create and link cell
+            var nchild = new Simplex(this, nv, null, this.next, this)
+            this.next.prev = nchild
+            this.next = nchild
+            for(var l=0; l<nv.length; ++l) {
+              this._dual[nv[l]].push(nchild)
+            }
+            //Add to child pointers
+            c.children.push(nchild)
+            opposite.children.push(nchild)
+            //Mark to visit
+            to_visit.push(nchild)
+          }
+        }
+        break do_flip
+      }
+    }
+  }
+}
+
+dproto.locate = function(p) {
+  var c = this._root
+  while(c.children) {
+    for(var i=0; i<c.children.length; ++i) {
+      if(c.children[i].contains(p)) {
+        c = c.children[i]
+        break
+      }
+    }
+  }
+  return c.vertices
+}
+
+Object.defineProperty(dproto, "cells", {
+  get: function() {
+    var r = []
+    for(var cur=this.next; cur !== this; cur = cur.next) {
+      r.push(cur.vertices)
+    }
+    return r
+  }
+})
+
+function createBoundingSimplex(dimension) {
+  var result = new Array(dimension+1)
+  for(var i=0; i<=dimension; ++i) {
+    result[i] = new Array(dimension)
+  }
+  for(var i=1; i<=dimension; ++i) {
+    result[i][i-1] = 1e30
+    for(var j=0; j<i-1; ++j) {
+      result[i][j] = 0.0
+    }
+    for(var j=0; j<i; ++j) {
+      result[j][i-1] = -1e30
+    }
+  }
+  return result
+}
+
+function createDelaunayTriangulation(dimension, points) {
+  var bounds = createBoundingSimplex(dimension)
+  var root = new Simplex(null, iota(dimension+1), null, null, null)
+  var dual = new Array(dimension+1)
+  for(var i=0; i<dual.length; ++i) {
+    dual[i] = [root]
+  }
+  var triangulation = new DelaunayTriangulation(bounds, dual, root)
+  root.triangulation = triangulation
+  root.next = root.prev = triangulation
+  triangulation.next = triangulation.prev = root
+  if(points) {
+    var spoints = deck.shuffle(points)
+    for(var i=0; i<spoints.length; ++i) {
+      triangulation.insert(spoints[i])
+    }
+  }
+  return triangulation
+}
+},{"iota-array":27,"deck":28,"robust-orientation":29,"robust-point-in-simplex":30,"robust-in-sphere":31,"simplicial-complex":20}],24:[function(require,module,exports){
+"use strict"
+
+var twoProduct = require("two-product")
+var robustSum = require("robust-sum")
+var robustScale = require("robust-scale")
+var robustSubtract = require("robust-subtract")
+
+var EPSILON     = 1.1102230246251565e-16
+var ERRBOUND3   = (3.0 + 16.0 * EPSILON) * EPSILON
+var ERRBOUND4   = (7.0 + 56.0 * EPSILON) * EPSILON
+
+module.exports = getOrientation
+
+function cofactor(m, c) {
+  var result = new Array(m.length-1)
+  for(var i=1; i<m.length; ++i) {
+    var r = result[i-1] = new Array(m.length-1)
+    for(var j=0,k=0; j<m.length; ++j) {
+      if(j === c) {
+        continue
+      }
+      r[k++] = m[i][j]
+    }
+  }
+  return result
+}
+
+function matrix(n) {
+  var result = new Array(n)
+  for(var i=0; i<n; ++i) {
+    result[i] = new Array(n)
+    for(var j=0; j<n; ++j) {
+      result[i][j] = ["m", j, "[", (n-i-1), "]"].join("")
+    }
+  }
+  return result
+}
+
+function sign(n) {
+  if(n & 1) {
+    return "-"
+  }
+  return ""
+}
+
+function generateSum(expr) {
+  if(expr.length === 1) {
+    return expr[0]
+  } else if(expr.length === 2) {
+    return ["sum(", expr[0], ",", expr[1], ")"].join("")
+  } else {
+    var m = expr.length>>1
+    return ["sum(", generateSum(expr.slice(0, m)), ",", generateSum(expr.slice(m)), ")"].join("")
+  }
+}
+
+function determinant(m) {
+  if(m.length === 2) {
+    return [["sum(prod(", m[0][0], ",", m[1][1], "),prod(-", m[0][1], ",", m[1][0], "))"].join("")]
+  } else {
+    var expr = []
+    for(var i=0; i<m.length; ++i) {
+      expr.push(["scale(", generateSum(determinant(cofactor(m, i))), ",", sign(i), m[0][i], ")"].join(""))
+    }
+    return expr
+  }
+}
+
+function orientation(n) {
+  var pos = []
+  var neg = []
+  var m = matrix(n)
+  var args = []
+  for(var i=0; i<n; ++i) {
+    if((i&1)===0) {
+      pos.push.apply(pos, determinant(cofactor(m, i)))
+    } else {
+      neg.push.apply(neg, determinant(cofactor(m, i)))
+    }
+    args.push("m" + i)
+  }
+  var posExpr = generateSum(pos)
+  var negExpr = generateSum(neg)
+  var funcName = "orientation" + n + "Exact"
+  var code = ["function ", funcName, "(", args.join(), "){var p=", posExpr, ",n=", negExpr, ",d=sub(p,n);\
+return d[d.length-1];};return ", funcName].join("")
+  var proc = new Function("sum", "prod", "scale", "sub", code)
+  return proc(robustSum, twoProduct, robustScale, robustSubtract)
+}
+
+var orientation3Exact = orientation(3)
+var orientation4Exact = orientation(4)
+
+var CACHED = [
+  function orientation0() { return 0 },
+  function orientation1() { return 0 },
+  function orientation2(a, b) { 
+    if(a[0] < b[0]) { return -1 }
+    if(a[0] > b[0]) { return 1 }
+    return 0
+  },
+  function orientation3(a, b, c) {
+    var l = (a[1] - c[1]) * (b[0] - c[0])
+    var r = (a[0] - c[0]) * (b[1] - c[1])
+    var det = l - r
+    var s
+    if(l > 0) {
+      if(r <= 0) {
+        return det
+      } else {
+        s = l + r
+      }
+    } else if(l < 0) {
+      if(r >= 0) {
+        return det
+      } else {
+        s = -(l + r)
+      }
+    } else {
+      return det
+    }
+    var tol = ERRBOUND3 * s
+    if(det >= tol || det <= -tol) {
+      return det
+    }
+    return orientation3Exact(a, b, c)
+  },
+  function orientation4(a,b,c,d) {
+    var adx = a[0] - d[0]
+    var bdx = b[0] - d[0]
+    var cdx = c[0] - d[0]
+    var ady = a[1] - d[1]
+    var bdy = b[1] - d[1]
+    var cdy = c[1] - d[1]
+    var adz = a[2] - d[2]
+    var bdz = b[2] - d[2]
+    var cdz = c[2] - d[2]
+    var bdxcdy = bdx * cdy
+    var cdxbdy = cdx * bdy
+    var cdxady = cdx * ady
+    var adxcdy = adx * cdy
+    var adxbdy = adx * bdy
+    var bdxady = bdx * ady
+    var det = adz * (bdxcdy - cdxbdy) 
+            + bdz * (cdxady - adxcdy)
+            + cdz * (adxbdy - bdxady)
+    var permanent = (Math.abs(bdxcdy) + Math.abs(cdxbdy)) * Math.abs(adz)
+                  + (Math.abs(cdxady) + Math.abs(adxcdy)) * Math.abs(bdz)
+                  + (Math.abs(adxbdy) + Math.abs(bdxady)) * Math.abs(cdz)
+    var tol = ERRBOUND4 * permanent
+    if ((det > tol) || (-det > tol)) {
+      return det
+    }
+    return orientation4Exact(a,b,c,d)
+  }
+]
+
+var O2 = CACHED[2]
+var O3 = CACHED[3]
+var O4 = CACHED[4]
+
+function getOrientation(a, b, c, d) {
+  var n = arguments.length
+  switch(n) {
+    case 0:
+    case 1:   return 0
+    case 2:   return O2(a,b)
+    case 3:   return O3(a,b,c)
+    case 4:   return O4(a,b,c,d)
+    default:
+      while(CACHED.length <= n) {
+        CACHED.push(orientation(CACHED.length))
+      }
+      var p = CACHED[m.length]
+      return p.apply(undefined, arguments)
+  }
+}
+},{"two-product":32,"robust-sum":33,"robust-scale":34,"robust-subtract":35}],21:[function(require,module,exports){
+"use strict"
+
+module.exports = orderSegments
+
+var orient = require("robust-orientation")
+
+function horizontalOrder(a, b) {
+  var bl, br
+  if(b[0][0] < b[1][0]) {
+    bl = b[0]
+    br = b[1]
+  } else if(b[0][0] > b[1][0]) {
+    bl = b[1]
+    br = b[0]
+  } else {
+    var alo = Math.min(a[0][1], a[1][1])
+    var ahi = Math.max(a[0][1], a[1][1])
+    var blo = Math.min(b[0][1], b[1][1])
+    var bhi = Math.max(b[0][1], b[1][1])
+    if(ahi < blo) {
+      return ahi - blo
+    }
+    if(alo > bhi) {
+      return alo - bhi
+    }
+    return ahi - bhi
+  }
+  var al, ar
+  if(a[0][1] < a[1][1]) {
+    al = a[0]
+    ar = a[1]
+  } else {
+    al = a[1]
+    ar = a[0]
+  }
+  var d = orient(br, bl, al)
+  if(d) {
+    return d
+  }
+  d = orient(br, bl, ar)
+  if(d) {
+    return d
+  }
+  return ar - br
+}
+
+function orderSegments(b, a) {
+  var al, ar
+  if(a[0][0] < a[1][0]) {
+    al = a[0]
+    ar = a[1]
+  } else if(a[0][0] > a[1][0]) {
+    al = a[1]
+    ar = a[0]
+  } else {
+    return horizontalOrder(a, b)
+  }
+  var bl, br
+  if(b[0][0] < b[1][0]) {
+    bl = b[0]
+    br = b[1]
+  } else if(b[0][0] > b[1][0]) {
+    bl = b[1]
+    br = b[0]
+  } else {
+    return -horizontalOrder(b, a)
+  }
+  var d1 = orient(al, ar, br)
+  var d2 = orient(al, ar, bl)
+  if(d1 < 0) {
+    if(d2 <= 0) {
+      return d1
+    }
+  } else if(d1 > 0) {
+    if(d2 >= 0) {
+      return d1
+    }
+  } else if(d2) {
+    return d2
+  }
+  d1 = orient(br, bl, ar)
+  d2 = orient(br, bl, al)
+  if(d1 < 0) {
+    if(d2 <= 0) {
+      return d1
+    }
+  } else if(d1 > 0) {
+    if(d2 >= 0) {
+      return d1
+    }
+  } else if(d2) {
+    return d2
+  }
+  return ar[0] - br[0]
+}
+},{"robust-orientation":24}],32:[function(require,module,exports){
+"use strict"
+
+module.exports = twoProduct
+
+var HALF_DOUBLE = (1<<26) + 1
+
+function twoProduct(a, b, result) {
+	var x = a * b
+
+	var c = HALF_DOUBLE * a
+	var abig = c - a
+	var ahi = c - abig
+	var alo = a - ahi
+	
+	var d = HALF_DOUBLE * b
+	var bbig = d - b
+	var bhi = d - bbig
+	var blo = b - bhi
+	
+	var err1 = x - (ahi * bhi)
+	var err2 = err1 - (alo * bhi)
+	var err3 = err2 - (ahi * blo)
+	
+	var y = alo * blo - err3
+	
+	if(result) {
+		result[0] = y
+		result[1] = x
+		return result
+	}
+	
+	return [ y, x ]
+}
+},{}],29:[function(require,module,exports){
+"use strict"
+
+var twoProduct = require("two-product")
+var robustSum = require("robust-sum")
+var robustScale = require("robust-scale")
+
+module.exports = getOrientation
+
+function cofactor(m, c) {
+  var result = new Array(m.length-1)
+  for(var i=1; i<m.length; ++i) {
+    var r = result[i-1] = new Array(m.length-1)
+    for(var j=0,k=0; j<m.length; ++j) {
+      if(j === c) {
+        continue
+      }
+      r[k++] = m[i][j]
+    }
+  }
+  return result
+}
+
+function matrix(n) {
+  var result = new Array(n)
+  for(var i=0; i<n; ++i) {
+    result[i] = new Array(n)
+    for(var j=0; j<n; ++j) {
+      result[i][j] = ["m[", j, "][", (n-i-1), "]"].join("")
+    }
+  }
+  return result
+}
+
+function sign(n) {
+  if(n & 1) {
+    return "-"
+  }
+  return ""
+}
+
+function generateSum(expr) {
+  if(expr.length === 1) {
+    return expr[0]
+  } else if(expr.length === 2) {
+    return ["sum(", expr[0], ",", expr[1], ")"].join("")
+  } else {
+    var m = expr.length>>1
+    return ["sum(", generateSum(expr.slice(0, m)), ",", generateSum(expr.slice(m)), ")"].join("")
+  }
+}
+
+function determinant(m) {
+  if(m.length === 2) {
+    return ["sum(prod(", m[0][0], ",", m[1][1], "),prod(-", m[0][1], ",", m[1][0], "))"].join("")
+  } else {
+    var expr = []
+    for(var i=0; i<m.length; ++i) {
+      expr.push(["scale(", determinant(cofactor(m, i)), ",", sign(i), m[0][i], ")"].join(""))
+    }
+    return generateSum(expr)
+  }
+}
+
+function orientation(n) {
+  var pos = []
+  var neg = []
+  var m = matrix(n)
+  for(var i=0; i<n; ++i) {
+    if((i&1)===0) {
+      pos.push(determinant(cofactor(m, i)))
+    } else {
+      neg.push(determinant(cofactor(m, i)))
+    }
+  }
+  var posExpr = generateSum(pos)
+  var negExpr = generateSum(neg)
+  var code = ["function orientation", n, "(m){var p=", posExpr, ",n=", negExpr, ";\
+for(var i=p.length-1,j=n.length-1;i>=0&&j>=0;--i,--j){\
+if(p[i]<n[j]){return -1}else if(p[i]>n[j]){return 1}}\
+if(i>=0){return p[i]>0?1:(p[i]<0?-1:0)}\
+if(j>=0){return n[j]<0?1:(n[j]>0?-1:0)}\
+return 0};return orientation", n].join("")
+  var proc = new Function("sum", "prod", "scale", code)
+  return proc(robustSum, twoProduct, robustScale)
+}
+
+var CACHED = [
+  function orientation0() { return 0 },
+  function orientation1() { return 0 },
+  function orientation2(a) { 
+    var d = a[0][0] - a[1][0]
+    if(d < 0) { return -1 }
+    if(d > 0) { return 1 }
+    return 0
+  }
+]
+
+function getOrientation(m) {
+  while(CACHED.length <= m.length) {
+    CACHED.push(orientation(CACHED.length))
+  }
+  var p = CACHED[m.length]
+  return p(m)
+}
+},{"two-product":36,"robust-sum":37,"robust-scale":38}],31:[function(require,module,exports){
+"use strict"
+
+var twoProduct = require("two-product")
+var robustSum = require("robust-sum")
+var robustDiff = require("robust-subtract")
+var robustScale = require("robust-scale")
+
+module.exports = getInSphere
+
+function cofactor(m, c) {
+  var result = new Array(m.length-1)
+  for(var i=1; i<m.length; ++i) {
+    var r = result[i-1] = new Array(m.length-1)
+    for(var j=0,k=0; j<m.length; ++j) {
+      if(j === c) {
+        continue
+      }
+      r[k++] = m[i][j]
+    }
+  }
+  return result
+}
+
+function matrix(n) {
+  var result = new Array(n)
+  for(var i=0; i<n; ++i) {
+    result[i] = new Array(n)
+    for(var j=0; j<n; ++j) {
+      result[i][j] = ["m[", j, "][", (n-i-2), "]"].join("")
+    }
+  }
+  return result
+}
+
+function generateSum(expr) {
+  if(expr.length === 1) {
+    return expr[0]
+  } else if(expr.length === 2) {
+    return ["sum(", expr[0], ",", expr[1], ")"].join("")
+  } else {
+    var m = expr.length>>1
+    return ["sum(", generateSum(expr.slice(0, m)), ",", generateSum(expr.slice(m)), ")"].join("")
+  }
+}
+
+function makeProduct(a, b) {
+  if(a.charAt(0) === "m") {
+    if(b.charAt(0) === "w") {
+      var toks = a.split("]")
+      return ["w", b.substr(1), "m", toks[0].substr(2)].join("")
+    } else {
+      return ["prod(", a, ",", b, ")"].join("")
+    }
+  } else {
+    return makeProduct(b, a)
+  }
+}
+
+function sign(s) {
+  if(s & 1 !== 0) {
+    return "-"
+  }
+  return ""
+}
+
+function determinant(m) {
+  if(m.length === 2) {
+    return [["diff(", makeProduct(m[0][0], m[1][1]), ",", makeProduct(m[1][0], m[0][1]), ")"].join("")]
+  } else {
+    var expr = []
+    for(var i=0; i<m.length; ++i) {
+      expr.push(["scale(", generateSum(determinant(cofactor(m, i))), ",", sign(i), m[0][i], ")"].join(""))
+    }
+    return expr
+  }
+}
+
+function makeSquare(d, n) {
+  var terms = []
+  for(var i=0; i<n-2; ++i) {
+    terms.push(["prod(m[", d, "][", i, "],m[", d, "][", i, "])"].join(""))
+  }
+  return generateSum(terms)
+}
+
+function orientation(n) {
+  var pos = []
+  var neg = []
+  var m = matrix(n)
+  for(var i=0; i<n; ++i) {
+    m[0][i] = "1"
+    m[n-1][i] = "w"+i
+  } 
+  for(var i=0; i<n; ++i) {
+    if((i&1)===0) {
+      pos.push.apply(pos,determinant(cofactor(m, i)))
+    } else {
+      neg.push.apply(neg,determinant(cofactor(m, i)))
+    }
+  }
+  var posExpr = generateSum(pos)
+  var negExpr = generateSum(neg)
+  var code = ["function inSphere", n, "(m){"]
+
+  for(var i=0; i<n; ++i) {
+    code.push("var w",i,"=",makeSquare(i,n),";")
+    for(var j=0; j<n; ++j) {
+      if(j !== i) {
+        code.push("var w",i,"m",j,"=scale(w",i,",m[",j,"][0]);")
+      }
+    }
+  }
+
+  code.push("var p=", posExpr, ",n=", negExpr, ";\
+for(var i=p.length-1,j=n.length-1;i>=0&&j>=0;--i,--j){\
+if(p[i]<n[j]){return -1}else if(p[i]>n[j]){return 1}}\
+if(i>=0){return p[i]>0?1:(p[i]<0?-1:0)}\
+if(j>=0){return n[j]<0?1:(n[j]>0?-1:0)}\
+return 0};return inSphere", n)
+
+  var proc = new Function("sum", "diff", "prod", "scale", code.join(""))
+  return proc(robustSum, robustDiff, twoProduct, robustScale)
+}
+
+var CACHED = [
+  function inSphere0() { return 0 },
+  function inSphere1() { return 0 },
+  function inSphere2() { return 0 },
+  function inSphere3(m) { 
+    var a = m[0][0], b = m[1][0], c = m[2][0]
+    if(a < b) {
+      if(a < c) {
+        if(c < b) {
+          return -1
+        } else if(c > b) {
+          return 1
+        } else {
+          return 0
+        }
+      } else if(a === c) {
+        return 0
+      } else {
+        return 1
+      }
+    } else {
+      if(b < c) {
+        if(c < a) {
+          return 1
+        } else if(c > a) {
+          return -1
+        } else {
+          return 0
+        }
+      } else if(b === c) {
+        return 0
+      } else {
+        return -1
+      }
+    }
+  }
+]
+
+function getInSphere(m) {
+  while(CACHED.length <= m.length) {
+    CACHED.push(orientation(CACHED.length))
+  }
+  var p = CACHED[m.length]
+  return p(m)
+}
+},{"two-product":39,"robust-sum":40,"robust-scale":41,"robust-subtract":42}],36:[function(require,module,exports){
+"use strict"
+
+module.exports = twoProduct
+
+var HALF_DOUBLE = (1<<26) + 1
+
+function twoProduct(a, b, result) {
+	var x = a * b
+
+	var c = HALF_DOUBLE * a
+	var abig = c - a
+	var ahi = c - abig
+	var alo = a - ahi
+	
+	var d = HALF_DOUBLE * b
+	var bbig = d - b
+	var bhi = d - bbig
+	var blo = b - bhi
+	
+	var err1 = x - (ahi * bhi)
+	var err2 = err1 - (alo * bhi)
+	var err3 = err2 - (ahi * blo)
+	
+	var y = alo * blo - err3
+
+	if(result) {
+		result[0] = y || 0.0
+		result[1] = x || 0.0
+		return result
+	}
+	
+	return [ y || 0.0, x || 0.0 	]
+}
+},{}],39:[function(require,module,exports){
+"use strict"
+
+module.exports = twoProduct
+
+var HALF_DOUBLE = (1<<26) + 1
+
+function twoProduct(a, b, result) {
+	var x = a * b
+
+	var c = HALF_DOUBLE * a
+	var abig = c - a
+	var ahi = c - abig
+	var alo = a - ahi
+	
+	var d = HALF_DOUBLE * b
+	var bbig = d - b
+	var bhi = d - bbig
+	var blo = b - bhi
+	
+	var err1 = x - (ahi * bhi)
+	var err2 = err1 - (alo * bhi)
+	var err3 = err2 - (ahi * blo)
+	
+	var y = alo * blo - err3
+
+	if(result) {
+		result[0] = y || 0.0
+		result[1] = x || 0.0
+		return result
+	}
+	
+	return [ y || 0.0, x || 0.0 	]
+}
+},{}],30:[function(require,module,exports){
+"use strict"
+
+var orientation = require("robust-orientation")
+
+module.exports = inSimplex
+
+function inSimplex(simplex, point) {
+  var s = orientation(simplex)
+  var scopy = simplex.slice()
+  var boundary = false
+  for(var i=0; i<simplex.length; ++i) {
+    scopy[i] = point
+    var o = orientation(scopy)
+    scopy[i] = simplex[i]
+    if(o) {
+      if(o !== s) {
+        return -1
+      }
+    } else {
+      boundary = true
+    }
+  }
+  if(boundary) {
+    return 0
+  }
+  return 1
+}
+},{"robust-orientation":29}],33:[function(require,module,exports){
+"use strict"
+
+var twoSum = require("two-sum")
+var binaryMerge = require("binary-merge")
+
+module.exports = linearExpansionSum
+
+function compareMagnitudes(a, b) {
+	return Math.abs(a) - Math.abs(b)
+}
+
+function linearExpansionSum(e, f, result) {
+	var g = binaryMerge(e, f, compareMagnitudes, result)
+	var n = e.length + f.length
+	var count = 0
+	var a = g[1]
+	var b = g[0]
+	var x = a + b
+	var bv = x - a
+	var y = b - bv
+	var q = [y, x]
+	for(var i=2; i<n; ++i) {
+		a = g[i]
+		b = q[0]
+		x = a + b
+		bv = x - a
+		y = b - bv
+		if(y) {
+			g[count++] = y
+		}
+		twoSum(q[1], x, q)
+	}
+	if(q[0]) {
+		g[count++] = q[0]
+	}
+	if(q[1]) {
+		g[count++] = q[1]
+	}
+	if(!count) {
+		g[count++] = 0.0
+	}
+	if(result) {
+    if(count < g.length) {
+      var ptr = g.length-1
+      count--
+      while(count >= 0) {
+        g[ptr--] = g[count--]
+      }
+      while(ptr >= 0) {
+        g[ptr--] = 0.0
+      }
+    }
+	} else {
+		g.length = count
+	}
+	return g
+}
+},{"two-sum":43,"binary-merge":44}],35:[function(require,module,exports){
+"use strict"
+
+var sum = require("robust-sum")
+
+module.exports = robustDiff
+
+function robustDiff(a,b) {
+  var c = b.slice()
+  for(var i=0; i<c.length; ++i) {
+    c[i] = -c[i]
+  }
+  return sum(a,c)
+}
+},{"robust-sum":45}],43:[function(require,module,exports){
+"use strict"
+
+module.exports = fastTwoSum
+
+function fastTwoSum(a, b, result) {
+	var x = a + b
+	var bv = x - a
+	var av = x - bv
+	var br = b - bv
+	var ar = a - av
+	if(result) {
+		result[0] = ar + br
+		result[1] = x
+		return result
+	}
+	return [ar+br, x]
+}
+},{}],44:[function(require,module,exports){
+"use strict"
+
+function merge2_cmp(a, b, result, compare) {
+  var a_ptr = 0
+    , b_ptr = 0
+    , r_ptr = 0
+  while(a_ptr < a.length && b_ptr < b.length) {
+    if(compare(a[a_ptr], b[b_ptr]) <= 0) {
+      result[r_ptr++] = a[a_ptr++]
+    } else {
+      result[r_ptr++] = b[b_ptr++]
+    }
+  }
+  while(a_ptr < a.length) {
+    result[r_ptr++] = a[a_ptr++]
+  }
+  while(b_ptr < b.length) {
+    result[r_ptr++] = b[b_ptr++]
+  }
+}
+
+function merge2_def(a, b, result) {
+  var a_ptr = 0
+    , b_ptr = 0
+    , r_ptr = 0
+  while(a_ptr < a.length && b_ptr < b.length) {
+    if(a[a_ptr] <= b[b_ptr]) {
+      result[r_ptr++] = a[a_ptr++]
+    } else {
+      result[r_ptr++] = b[b_ptr++]
+    }
+  }
+  while(a_ptr < a.length) {
+    result[r_ptr++] = a[a_ptr++]
+  }
+  while(b_ptr < b.length) {
+    result[r_ptr++] = b[b_ptr++]
+  }
+}
+
+function merge2(a, b, compare, result) {
+  if(!result) {
+    result = new Array(a.length + b.length)
+  }
+  if(compare) {
+    merge2_cmp(a, b, result, compare)
+  } else {
+    merge2_def(a, b, result)
+  }
+  return result
+}
+
+module.exports = merge2
+},{}],46:[function(require,module,exports){
+"use strict"
+
+module.exports = fastTwoSum
+
+function fastTwoSum(a, b, result) {
+	var x = a + b
+	var bv = x - a
+	var av = x - bv
+	var br = b - bv
+	var ar = a - av
+	if(result) {
+		result[0] = ar + br
+		result[1] = x
+		return result
+	}
+	return [ar+br, x]
+}
+},{}],34:[function(require,module,exports){
+"use strict"
+
+var twoProduct = require("two-product")
+var twoSum = require("two-sum")
+
+module.exports = scaleLinearExpansion
+
+function scaleLinearExpansion(e, b, result) {
+	var n = e.length
+	var g
+	if(result) {
+		g = result
+	} else {
+		g = new Array(2 * n)
+	}
+	var q = [0.1, 0.1]
+	var t = [0.1, 0.1]
+	var count = 0
+	twoProduct(e[0], b, q)
+	if(q[0]) {
+		g[count++] = q[0]
+	}
+	for(var i=1; i<n; ++i) {
+		twoProduct(e[i], b, t)
+		twoSum(q[1], t[0], q)
+		if(q[0]) {
+			g[count++] = q[0]
+		}
+		var a = t[1]
+		var b = q[1]
+		var x = a + b
+		var bv = x - a
+		var y = b - bv
+		q[1] = x
+		if(y) {
+			g[count++] = y
+		}
+	}
+	if(q[1]) {
+		g[count++] = q[1]
+	}
+	if(count === 0) {
+		g[count++] = 0.0
+	}
+	if(result) {
+    if(count < g.length) {
+      var ptr = g.length-1
+      count--
+      while(count >= 0) {
+        g[ptr--] = g[count--]
+      }
+      while(ptr >= 0) {
+        g[ptr--] = 0.0
+      }
+    }
+		return g
+	}
+	g.length = count
+	return g
+}
+},{"two-sum":46,"two-product":32}],37:[function(require,module,exports){
+"use strict"
+
+var twoSum = require("two-sum")
+var binaryMerge = require("binary-merge")
+
+module.exports = linearExpansionSum
+
+function compareMagnitudes(a, b) {
+  return Math.abs(a) - Math.abs(b)
+}
+
+function linearExpansionSum(e, f, result) {
+  var g = binaryMerge(e, f, compareMagnitudes, result)
+  var n = e.length + f.length
+  var count = 0
+  var a = g[1]
+  var b = g[0]
+  var x = a + b
+  var bv = x - a
+  var y = b - bv
+  var q = [y, x]
+  for(var i=2; i<n; ++i) {
+    a = g[i]
+    b = q[0] || 0.0
+    x = a + b
+    bv = x - a
+    y = b - bv
+    if(y) {
+      g[count++] = y
+    }
+    twoSum(q[1], x, q)
+  }
+  if(q[0]) {
+    g[count++] = q[0]
+  }
+  if(q[1]) {
+    g[count++] = q[1]
+  }
+  if(!count) {
+    g[count++] = 0.0
+  }
+  if(result) {
+    if(count < g.length) {
+      var ptr = g.length-1
+      count--
+      while(count >= 0) {
+        g[ptr--] = g[count--]
+      }
+      while(ptr >= 0) {
+        g[ptr--] = 0.0
+      }
+    }
+  } else {
+    g.length = count
+  }
+  return g
+}
+},{"two-sum":47,"binary-merge":48}],40:[function(require,module,exports){
+"use strict"
+
+var twoSum = require("two-sum")
+var binaryMerge = require("binary-merge")
+
+module.exports = linearExpansionSum
+
+function compareMagnitudes(a, b) {
+  return Math.abs(a) - Math.abs(b)
+}
+
+function linearExpansionSum(e, f, result) {
+  var g = binaryMerge(e, f, compareMagnitudes, result)
+  var n = e.length + f.length
+  var count = 0
+  var a = g[1]
+  var b = g[0]
+  var x = a + b
+  var bv = x - a
+  var y = b - bv
+  var q = [y, x]
+  for(var i=2; i<n; ++i) {
+    a = g[i]
+    b = q[0] || 0.0
+    x = a + b
+    bv = x - a
+    y = b - bv
+    if(y) {
+      g[count++] = y
+    }
+    twoSum(q[1], x, q)
+  }
+  if(q[0]) {
+    g[count++] = q[0]
+  }
+  if(q[1]) {
+    g[count++] = q[1]
+  }
+  if(!count) {
+    g[count++] = 0.0
+  }
+  if(result) {
+    if(count < g.length) {
+      var ptr = g.length-1
+      count--
+      while(count >= 0) {
+        g[ptr--] = g[count--]
+      }
+      while(ptr >= 0) {
+        g[ptr--] = 0.0
+      }
+    }
+  } else {
+    g.length = count
+  }
+  return g
+}
+},{"two-sum":49,"binary-merge":50}],47:[function(require,module,exports){
+"use strict"
+
+module.exports = fastTwoSum
+
+function fastTwoSum(a, b, result) {
+	var x = a + b
+	var bv = x - a
+	var av = x - bv
+	var br = b - bv
+	var ar = a - av
+	if(result) {
+		result[0] = ar + br
+		result[1] = x
+		return result
+	}
+	return [ar+br, x]
+}
+},{}],48:[function(require,module,exports){
+"use strict"
+
+function merge2_cmp(a, b, result, compare) {
+  var a_ptr = 0
+    , b_ptr = 0
+    , r_ptr = 0
+  while(a_ptr < a.length && b_ptr < b.length) {
+    if(compare(a[a_ptr], b[b_ptr]) <= 0) {
+      result[r_ptr++] = a[a_ptr++]
+    } else {
+      result[r_ptr++] = b[b_ptr++]
+    }
+  }
+  while(a_ptr < a.length) {
+    result[r_ptr++] = a[a_ptr++]
+  }
+  while(b_ptr < b.length) {
+    result[r_ptr++] = b[b_ptr++]
+  }
+}
+
+function merge2_def(a, b, result) {
+  var a_ptr = 0
+    , b_ptr = 0
+    , r_ptr = 0
+  while(a_ptr < a.length && b_ptr < b.length) {
+    if(a[a_ptr] <= b[b_ptr]) {
+      result[r_ptr++] = a[a_ptr++]
+    } else {
+      result[r_ptr++] = b[b_ptr++]
+    }
+  }
+  while(a_ptr < a.length) {
+    result[r_ptr++] = a[a_ptr++]
+  }
+  while(b_ptr < b.length) {
+    result[r_ptr++] = b[b_ptr++]
+  }
+}
+
+function merge2(a, b, compare, result) {
+  if(!result) {
+    result = new Array(a.length + b.length)
+  }
+  if(compare) {
+    merge2_cmp(a, b, result, compare)
+  } else {
+    merge2_def(a, b, result)
+  }
+  return result
+}
+
+module.exports = merge2
+},{}],51:[function(require,module,exports){
+"use strict"
+
+module.exports = fastTwoSum
+
+function fastTwoSum(a, b, result) {
+	var x = a + b
+	var bv = x - a
+	var av = x - bv
+	var br = b - bv
+	var ar = a - av
+	if(result) {
+		result[0] = ar + br
+		result[1] = x
+		return result
+	}
+	return [ar+br, x]
+}
+},{}],49:[function(require,module,exports){
+"use strict"
+
+module.exports = fastTwoSum
+
+function fastTwoSum(a, b, result) {
+	var x = a + b
+	var bv = x - a
+	var av = x - bv
+	var br = b - bv
+	var ar = a - av
+	if(result) {
+		result[0] = ar + br
+		result[1] = x
+		return result
+	}
+	return [ar+br, x]
+}
+},{}],50:[function(require,module,exports){
+"use strict"
+
+function merge2_cmp(a, b, result, compare) {
+  var a_ptr = 0
+    , b_ptr = 0
+    , r_ptr = 0
+  while(a_ptr < a.length && b_ptr < b.length) {
+    if(compare(a[a_ptr], b[b_ptr]) <= 0) {
+      result[r_ptr++] = a[a_ptr++]
+    } else {
+      result[r_ptr++] = b[b_ptr++]
+    }
+  }
+  while(a_ptr < a.length) {
+    result[r_ptr++] = a[a_ptr++]
+  }
+  while(b_ptr < b.length) {
+    result[r_ptr++] = b[b_ptr++]
+  }
+}
+
+function merge2_def(a, b, result) {
+  var a_ptr = 0
+    , b_ptr = 0
+    , r_ptr = 0
+  while(a_ptr < a.length && b_ptr < b.length) {
+    if(a[a_ptr] <= b[b_ptr]) {
+      result[r_ptr++] = a[a_ptr++]
+    } else {
+      result[r_ptr++] = b[b_ptr++]
+    }
+  }
+  while(a_ptr < a.length) {
+    result[r_ptr++] = a[a_ptr++]
+  }
+  while(b_ptr < b.length) {
+    result[r_ptr++] = b[b_ptr++]
+  }
+}
+
+function merge2(a, b, compare, result) {
+  if(!result) {
+    result = new Array(a.length + b.length)
+  }
+  if(compare) {
+    merge2_cmp(a, b, result, compare)
+  } else {
+    merge2_def(a, b, result)
+  }
+  return result
+}
+
+module.exports = merge2
+},{}],52:[function(require,module,exports){
+"use strict"
+
+module.exports = fastTwoSum
+
+function fastTwoSum(a, b, result) {
+	var x = a + b
+	var bv = x - a
+	var av = x - bv
+	var br = b - bv
+	var ar = a - av
+	if(result) {
+		result[0] = ar + br
+		result[1] = x
+		return result
+	}
+	return [ar+br, x]
+}
+},{}],38:[function(require,module,exports){
+"use strict"
+
+var twoProduct = require("two-product")
+var twoSum = require("two-sum")
+
+module.exports = scaleLinearExpansion
+
+function scaleLinearExpansion(e, scale, result) {
+	var n = e.length
+	var g
+	if(result) {
+		g = result
+	} else {
+		g = new Array(2 * n)
+	}
+	var q = [0.1, 0.1]
+	var t = [0.1, 0.1]
+	var count = 0
+	twoProduct(e[0], scale, q)
+	if(q[0]) {
+		g[count++] = q[0]
+	}
+	for(var i=1; i<n; ++i) {
+		twoProduct(e[i], scale, t)
+		twoSum(q[1], t[0], q)
+		if(q[0]) {
+			g[count++] = q[0]
+		}
+		var a = t[1]
+		var b = q[1]
+		var x = a + b
+		var bv = x - a
+		var y = b - bv
+		q[1] = x
+		if(y) {
+			g[count++] = y
+		}
+	}
+	if(q[1]) {
+		g[count++] = q[1]
+	}
+	if(count === 0) {
+		g[count++] = 0.0
+	}
+	if(result) {
+    if(count < g.length) {
+      var ptr = g.length-1
+      count--
+      while(count >= 0) {
+        g[ptr--] = g[count--]
+      }
+      while(ptr >= 0) {
+        g[ptr--] = 0.0
+      }
+    }
+		return g
+	}
+	g.length = count
+	return g
+}
+},{"two-sum":51,"two-product":36}],41:[function(require,module,exports){
+"use strict"
+
+var twoProduct = require("two-product")
+var twoSum = require("two-sum")
+
+module.exports = scaleLinearExpansion
+
+function scaleLinearExpansion(e, scale, result) {
+	var n = e.length
+	var g
+	if(result) {
+		g = result
+	} else {
+		g = new Array(2 * n)
+	}
+	var q = [0.1, 0.1]
+	var t = [0.1, 0.1]
+	var count = 0
+	twoProduct(e[0], scale, q)
+	if(q[0]) {
+		g[count++] = q[0]
+	}
+	for(var i=1; i<n; ++i) {
+		twoProduct(e[i], scale, t)
+		twoSum(q[1], t[0], q)
+		if(q[0]) {
+			g[count++] = q[0]
+		}
+		var a = t[1]
+		var b = q[1]
+		var x = a + b
+		var bv = x - a
+		var y = b - bv
+		q[1] = x
+		if(y) {
+			g[count++] = y
+		}
+	}
+	if(q[1]) {
+		g[count++] = q[1]
+	}
+	if(count === 0) {
+		g[count++] = 0.0
+	}
+	if(result) {
+    if(count < g.length) {
+      var ptr = g.length-1
+      count--
+      while(count >= 0) {
+        g[ptr--] = g[count--]
+      }
+      while(ptr >= 0) {
+        g[ptr--] = 0.0
+      }
+    }
+		return g
+	}
+	g.length = count
+	return g
+}
+},{"two-sum":52,"two-product":39}],42:[function(require,module,exports){
+"use strict"
+
+var sum = require("robust-sum")
+
+module.exports = robustDiff
+
+function robustDiff(a,b) {
+  var c = b.slice()
+  for(var i=0; i<c.length; ++i) {
+    c[i] = -c[i]
+  }
+  return sum(a,c)
+}
+},{"robust-sum":40}],45:[function(require,module,exports){
+"use strict"
+
+var twoSum = require("two-sum")
+var binaryMerge = require("binary-merge")
+
+module.exports = linearExpansionSum
+
+function compareMagnitudes(a, b) {
+  return Math.abs(a) - Math.abs(b)
+}
+
+function linearExpansionSum(e, f, result) {
+  var g = binaryMerge(e, f, compareMagnitudes, result)
+  var n = e.length + f.length
+  var count = 0
+  var a = g[1]
+  var b = g[0]
+  var x = a + b
+  var bv = x - a
+  var y = b - bv
+  var q = [y, x]
+  for(var i=2; i<n; ++i) {
+    a = g[i]
+    b = q[0] || 0.0
+    x = a + b
+    bv = x - a
+    y = b - bv
+    if(y) {
+      g[count++] = y
+    }
+    twoSum(q[1], x, q)
+  }
+  if(q[0]) {
+    g[count++] = q[0]
+  }
+  if(q[1]) {
+    g[count++] = q[1]
+  }
+  if(!count) {
+    g[count++] = 0.0
+  }
+  if(result) {
+    if(count < g.length) {
+      var ptr = g.length-1
+      count--
+      while(count >= 0) {
+        g[ptr--] = g[count--]
+      }
+      while(ptr >= 0) {
+        g[ptr--] = 0.0
+      }
+    }
+  } else {
+    g.length = count
+  }
+  return g
+}
+},{"two-sum":53,"binary-merge":54}],53:[function(require,module,exports){
+"use strict"
+
+module.exports = fastTwoSum
+
+function fastTwoSum(a, b, result) {
+	var x = a + b
+	var bv = x - a
+	var av = x - bv
+	var br = b - bv
+	var ar = a - av
+	if(result) {
+		result[0] = ar + br
+		result[1] = x
+		return result
+	}
+	return [ar+br, x]
+}
+},{}],54:[function(require,module,exports){
+"use strict"
+
+function merge2_cmp(a, b, result, compare) {
+  var a_ptr = 0
+    , b_ptr = 0
+    , r_ptr = 0
+  while(a_ptr < a.length && b_ptr < b.length) {
+    if(compare(a[a_ptr], b[b_ptr]) <= 0) {
+      result[r_ptr++] = a[a_ptr++]
+    } else {
+      result[r_ptr++] = b[b_ptr++]
+    }
+  }
+  while(a_ptr < a.length) {
+    result[r_ptr++] = a[a_ptr++]
+  }
+  while(b_ptr < b.length) {
+    result[r_ptr++] = b[b_ptr++]
+  }
+}
+
+function merge2_def(a, b, result) {
+  var a_ptr = 0
+    , b_ptr = 0
+    , r_ptr = 0
+  while(a_ptr < a.length && b_ptr < b.length) {
+    if(a[a_ptr] <= b[b_ptr]) {
+      result[r_ptr++] = a[a_ptr++]
+    } else {
+      result[r_ptr++] = b[b_ptr++]
+    }
+  }
+  while(a_ptr < a.length) {
+    result[r_ptr++] = a[a_ptr++]
+  }
+  while(b_ptr < b.length) {
+    result[r_ptr++] = b[b_ptr++]
+  }
+}
+
+function merge2(a, b, compare, result) {
+  if(!result) {
+    result = new Array(a.length + b.length)
+  }
+  if(compare) {
+    merge2_cmp(a, b, result, compare)
+  } else {
+    merge2_def(a, b, result)
+  }
+  return result
+}
+
+module.exports = merge2
+},{}]},{},[1])
+;</script>
+</html>
