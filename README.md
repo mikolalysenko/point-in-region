@@ -1,14 +1,54 @@
 point-in-region
 ===============
-Locates a point in a collection of regions.  Point location is exact, takes O(log(n)) time, and the data structure has a space requirement of O(n log(n)).
+[Locates a point](http://en.wikipedia.org/wiki/Point_location) in a collection of regions.  Point location is exact, takes O(log(n)) time, and the data structure has a space requirement of O(n log(n)).
 
 # Example
 
 ```javascript
-var preprocessRegions = require("point-in-region")
+//First create a list of vertices
+var vertices = [
+  [0, 0],
+  [1, 0],
+  [1, 1],
+  [0, 1],
+  [2, 0],
+  [3, 0],
+  [3, 1],
+  [2, 1],
+  [2.25, 0.25],
+  [2.75, 0.25],
+  [2.75, 0.75],
+  [2.25, 0.75]
+]
 
-//TODO: Finish mocking up example
+//Regions are defined by lists of loops of vertex indices
+var regions = [
+  //First region, just a square, one loop
+  [ 
+    [0, 1, 2, 3]
+  ],
+  //Second region, square with a hole in the middle
+  [
+    [4, 5, 6, 7],
+    [11, 10, 9, 8]    //Note inner loop has opposite orientation
+  ]
+]
+
+//Now we create the data structure
+var classifyPoint = require("point-in-region")(vertices, regions)
+
+//And we can use it to classify which region contains a given point
+var assert = require("assert")
+assert.equal(classifyPoint([0.5, 0.5]), 0)
+assert.equal(classifyPoint([2.1, 0.1]), 1)
+assert.equal(classifyPoint([100000, 10000]), -1)  //Outside points return -1
+assert.equal(classifyPoint([2.5, 0.5]), -1)  //Point in center hole is outside region
 ```
+
+[Here is an in browser demo you can try out yourself:](https://mikolalysenko.github.io/point-in-region)
+
+<img src="screenshot.png">
+
 
 # Install
 
