@@ -1,6 +1,6 @@
 {
   "name": "point-in-region",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "description": "Quickly and robustly determines which region contains a given query point",
   "main": "region.js",
   "directories": {
